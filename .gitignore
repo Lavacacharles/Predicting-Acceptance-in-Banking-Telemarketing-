@@ -1,0 +1,94 @@
+# =========================
+# Operating system
+# =========================
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+
+# =========================
+# R / RStudio
+# =========================
+
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# RStudio temporary files
+*.Rproj.user
+
+# =========================
+# Quarto
+# =========================
+
+.quarto/
+*_cache/
+*_files/
+
+# Quarto / knitr generated files
+*.html
+*.html.json
+
+
+# =========================
+# Generated reports
+# =========================
+
+*.pdf
+
+# Si quieres versionar algún PDF específico, puedes hacer:
+# !nombre-del-pdf.pdf
+
+
+# =========================
+# Datasets / raw data
+# =========================
+
+*.csv
+*.zip
+
+# Excepción: si quieres versionar datasets pequeños/específicos
+# !ruta/al/dataset.csv
+
+
+# =========================
+# Python
+# =========================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.mypy_cache/
+
+
+# =========================
+# Jupyter
+# =========================
+
+.ipynb_checkpoints/
+
+
+# =========================
+# Logs / temporary files
+# =========================
+
+*.log
+*.tmp
+*.temp
+
+
+# =========================
+# IDEs
+# =========================
+
+.vscode/
+.idea/
