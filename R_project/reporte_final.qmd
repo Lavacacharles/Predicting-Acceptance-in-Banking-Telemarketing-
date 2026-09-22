@@ -1,11 +1,5 @@
 ---
-title: "PROYECTO FINAL"
-author:
-- familyname: Quispe Vargas
-  othernames: Walter
-  qualifications: Docente
-email: wquispev@continental.edu.pe
-phone: (+51) 920000757
+title: "Análisis de la aceptación de depósitos a plazo en campañas de telemarketing bancario"
 department: CIENCIA DE DATOS E \newline  INTELIGENCIA ARTIFICIAL
 organization: Introducción a Ciencia de Datos e Inteligencia Artificial
 number-sections: true
@@ -15,13 +9,13 @@ cite-method: biblatex
 bibliography: references.bib
 biblio-style: authoryear-comp
 linestretch: 1.5
-format:
+format: 
   report-pdf:
     toc: true           # Activa la tabla de contenido
     toc-depth: 2        # Niveles de encabezado que se muestran
     number-sections: true  # (opcional) Numera los títulos
     lof: true           # (opcional) Lista de figuras
-    lot: true           # (opcional) Lista de tablas
+    lot: true           # (opcional) Lista de tablas   
 lang: es
 execute:
   echo: false
@@ -29,7 +23,6 @@ execute:
   message: false
   tbl-cap-location: bottom
 ---
-
 ```{=latex}
 \providecommand{\pandocbounded}[1]{#1}
 ```
@@ -68,32 +61,20 @@ tabla <- function(datos, digitos = 2, ancha = FALSE) {
 
 \newpage
 
-# RESUMEN
-
-**Título del trabajo:** Análisis exploratorio de la aceptación de depósitos a plazo en campañas de telemarketing bancario.
-
-**Dataset:** Bank Marketing, `bank-additional-full.csv` (UCI Machine Learning Repository).
-
-**Integrantes:**
+## Integrantes
 
 - Juan Aquino Espinoza
 - Angel Mora
 - Leonardo Cueva
 - Adrian Varillas
 
-Este informe presenta el entendimiento, la preparación y el análisis exploratorio de los datos de las campañas de telemarketing de un banco portugués, en las que se ofrecía a los clientes un depósito a plazo. El conjunto de datos tiene 41,188 contactos y solo el 11.27% terminó en una suscripción, lo que resume el problema de negocio: la mayor parte del esfuerzo de la campaña se invierte en clientes que no aceptan el producto.
+# CONTEXTO
 
-En la preparación de los datos se eliminaron 12 filas duplicadas, se revisaron los valores `"unknown"` comparando su tasa de aceptación con la del resto de categorías (se conservaron como categoría propia en `mora` y `educacion`, y se imputaron con la moda en las demás) y se separó el valor 999 de `dias_previos`, que significa "nunca contactado" y no una cantidad de días. Además se crearon variables sencillas como la duración en minutos, tramos de duración, grupos de edad y un indicador de contacto previo.
+## Descripción
 
-El análisis exploratorio muestra que la aceptación es mucho mayor en los clientes con historial de contacto (63.83% frente a 9.26%), en los periodos con Euribor baja (24.46% frente a 4.84%), en clientes jóvenes y mayores de 65 años, en estudiantes y jubilados, y en contactos por celular. También muestra que insistir sobre un mismo cliente se asocia con una menor aceptación y que tres indicadores macroeconómicos (`tasa_var_empleo`, `euribor3m` y `num_empleados`) están fuertemente correlacionados entre sí. Todas estas relaciones son asociaciones descriptivas y no implican causalidad.
+En el sector bancario, las campañas de telemarketing se usan para captar depósitos a plazo y forman parte de la estrategia central del banco para asegurar liquidez. El enfoque consiste en contactar de forma masiva a toda la base de clientes, sin embargo esto es ineficiente ya que la mayoría de los clientes contactados no suscribe el producto, lo que eleva el costo operativo de la campaña, satura los canales de atención y genera molestia en clientes que no tienen interés.
 
-# CONTEXTO DEL DATASET
-
-## Descripción del problema
-
-En el sector bancario, las campañas de telemarketing para captar depósitos a plazo son una estrategia central para asegurar liquidez. El enfoque tradicional consiste en contactar de forma masiva a toda la base de clientes. Este enfoque es ineficiente: la mayoría de los clientes contactados no suscribe el producto, lo que eleva el costo operativo de la campaña, satura los canales de atención y genera molestia en clientes que no tienen interés.
-
-En términos generales, nuestro objetivo es conocer **qué características del cliente, de la forma de contacto y del entorno económico se asocian con una mayor aceptación del depósito a plazo**, de modo que la campaña pueda concentrar sus esfuerzos en los segmentos con mayor propensión.
+En términos generales nuestro objetivo es conocer **qué características del cliente, de la forma de contacto y del entorno económico se asocian con una mayor aceptación del depósito a plazo**, de modo que la campaña pueda concentrar sus esfuerzos en los segmentos con mayor propensión.
 
 **Nota:** un depósito a plazo (o depósito a plazo fijo) es un producto financiero en el cual un cliente entrega una cantidad de dinero al banco para que sea resguardada durante un periodo de tiempo preestablecido.
 
@@ -101,9 +82,9 @@ En términos generales, nuestro objetivo es conocer **qué características del 
 
 El dataset proviene del **UCI Machine Learning Repository** (*Bank Marketing*) [@uci_bank] y documenta campañas de telemarketing de una institución bancaria portuguesa. Para validar la fuente y los metadatos revisamos directamente el artículo donde se publicó [@moro2014].
 
-Notamos que el estudio original y la versión pública del dataset no coinciden. Por ello, primero dejamos evidencia de las diferencias; **la consideración principal para este análisis es que rige la versión pública**.
+Notamos que el estudio original y la versión pública del dataset no coinciden, por ello primero dejamos evidencia de las diferencias; **la consideración principal para este análisis es que rige la versión pública**.
 
-| Métrica | Estudio original (Moro et al., 2014) | Dataset público (`bank-additional-full.csv`) |
+| Metadatos | Original (Moro et al., 2014) | Dataset público |
 |---|---|---|
 | Registros | 52,944 contactos | 41,188 registros |
 | Periodo | Mayo 2008 a junio 2013 | Mayo 2008 a noviembre 2010 |
@@ -112,44 +93,42 @@ Notamos que el estudio original y la versión pública del dataset no coinciden.
 
 : Diferencias entre el estudio original y el dataset público. {#tbl-fuente}
 
-El universo de trabajo son las 41,188 filas y 21 columnas del archivo público. El estudio original se usa solo para dar contexto de negocio.
+El universo de trabajo son las 41,188 filas y 21 columnas del archivo público. El estudio original se usara solo para dar contexto de negocio.
 
 ## Objetivos del análisis
 
-Este informe contiene nuestro entendimiento de los datos, su preparación y el análisis exploratorio. Específicamente, buscamos:
-
 1. Describir el perfil de los clientes contactados y las características de las llamadas.
 2. Identificar qué variables muestran diferencias en la tasa de aceptación entre grupos.
-3. Detectar relaciones lineales y posibles problemas de colinealidad entre las variables numéricas.
+3. Detectar relaciones lineales y colinealidad entre las variables numéricas.
 4. Señalar las variables clave que aportan valor para predecir la aceptación de depósitos a plazo.
 
 ## Variables
 
-| # | Variable original | Traducción usada | Descripción | Tipo |
-|---|---|---|------------|---|
-| 1 | `age` | `edad` | Edad del cliente (años) | Cuantitativa discreta |
-| 2 | `job` | `empleo` | Tipo de empleo | Cualitativa nominal |
-| 3 | `marital` | `estado_civil` | Estado civil | Cualitativa nominal |
-| 4 | `education` | `educacion` | Nivel educativo | Cualitativa ordinal |
-| 5 | `default` | `mora` | ¿Tiene crédito en mora? | Cualitativa nominal |
-| 6 | `housing` | `vivienda` | ¿Tiene préstamo hipotecario? | Cualitativa nominal |
-| 7 | `loan` | `prestamo` | ¿Tiene préstamo personal? | Cualitativa nominal |
-| 8 | `contact` | `tipo_contacto` | Tipo de teléfono del contacto | Cualitativa nominal |
-| 9 | `month` | `mes` | Mes del último contacto | Cualitativa ordinal |
-| 10 | `day_of_week` | `dia_semana` | Día de la semana del último contacto | Cualitativa ordinal |
-| 11 | `duration` | `duracion` | Duración del último contacto (segundos) | Cuantitativa continua |
-| 12 | `campaign` | `campana` | Número de contactos en la campaña actual | Cuantitativa discreta |
-| 13 | `pdays` | `dias_previos` | Días desde el último contacto de una campaña anterior (999 = nunca contactado) | Cuantitativa discreta |
-| 14 | `previous` | `contactos_previos` | Número de contactos antes de esta campaña | Cuantitativa discreta |
-| 15 | `poutcome` | `resultado_previo` | Resultado de la campaña anterior | Cualitativa nominal |
-| 16 | `emp.var.rate` | `tasa_var_empleo` | Tasa de variación del empleo (trimestral) | Cuantitativa continua |
-| 17 | `cons.price.idx` | `ipc` | Índice de precios al consumidor (mensual) | Cuantitativa continua |
-| 18 | `cons.conf.idx` | `icc` | Índice de confianza del consumidor (mensual) | Cuantitativa continua |
-| 19 | `euribor3m` | `euribor3m` | Tasa Euribor a 3 meses (diaria) | Cuantitativa continua |
-| 20 | `nr.employed` | `num_empleados` | Número de empleados, indicador macroeconómico (trimestral) | Cuantitativa continua |
-| 21 | `y` | `suscribio` | ¿Suscribió un depósito a plazo? (variable objetivo) | Cualitativa nominal (binaria) |
+| Original | Traducida | Descripción | Tipo |
+|---|---|------------|---|
+| `age` | `edad` | Edad del cliente (años) | CD |
+| `job` | `empleo` | Tipo de empleo | CN |
+| `marital` | `estado_civil` | Estado civil | CN |
+| `education` | `educacion` | Nivel educativo | CN |
+| `default` | `mora` | ¿Tiene crédito en mora? | CN |
+| `housing` | `vivienda` | ¿Tiene préstamo hipotecario? | CN |
+| `loan` | `prestamo` | ¿Tiene préstamo personal? | CN |
+| `contact` | `tipo_contacto` | Tipo de teléfono del contacto | CN |
+| `month` | `mes` | Mes del último contacto | CO |
+| `day_of_week` | `dia semana` | Día de la semana del último contacto | CO |
+| `duration` | `duracion` | Duración del último contacto (segundos) | CC |
+| `campaign` | `campana` | Número de contactos en la campaña actual | CD |
+| `pdays` | `dias previos` | Días desde el último contacto de una campaña anterior (999 = nunca contactado) | CD |
+| `previous` | `contactos previos` | Número de contactos antes de esta campaña | CD |
+| `poutcome` | `resultado previo` | Resultado de la campaña anterior | CN |
+| `emp.var. rate` | `tasa var empleo` | Tasa de variación del empleo (trimestral) | CC |
+| `cons. price. idx` | `ipc` | Índice de precios al consumidor (mensual) | CC |
+| `cons. conf. idx` | `icc` | Índice de confianza del consumidor (mensual) | CC |
+| `euribor3m` | `euribor3m` | Tasa Euribor a 3 meses (diaria) | CC |
+| `nr.employed` | `num_empleados` | Número de empleados, indicador macroeconómico (trimestral) | CC |
+| `y` | `suscribio` | ¿Suscribió un depósito a plazo? (variable objetivo) | CN |
 
-: Variables del dataset, nombre usado en el análisis y tipo de dato. {#tbl-variables}
+: Variables y tipología según: Cuantitativa discreta: CD, Cualitativa nominal: CN, Cuantitativa continua: CC, Cualitativa ordinal: CO . {#tbl-variables tbl-colwidths="[15, 20, 55, 10]"}
 
 \newpage
 
@@ -157,12 +136,10 @@ Este informe contiene nuestro entendimiento de los datos, su preparación y el a
 
 ## Librerías y funciones auxiliares
 
-Se cargan las librerías del curso: **pandas** para la manipulación de datos, **seaborn** y **matplotlib** para los gráficos, y **numpy** solo para operaciones aritméticas de apoyo. También se define un conjunto de funciones auxiliares que se reutilizan a lo largo del análisis.
+Se cargan las librerías: **pandas** para la manipulación de datos, **seaborn** y **matplotlib** para los gráficos, y **numpy** solo para operaciones aritméticas de apoyo. También se define un conjunto de funciones auxiliares que se reutilizan a lo largo del análisis.
 
-**Nota:** las siguientes secciones son solo observaciones; el tratamiento correspondiente se realiza en la sección de preprocesamiento.
 
-```{python}
-#| echo: true
+```{python, echo=FALSE}
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -176,8 +153,7 @@ pd.set_option("display.float_format", "{:,.2f}".format)
 RUTA_DATOS = "../bank-additional/bank-additional-full.csv"
 ```
 
-```{python}
-#| echo: true
+```{python, echo=FALSE}
 # Funciones auxiliares
 
 def mostrar_figura():
@@ -243,30 +219,29 @@ def tasa_aceptacion(datos, columna, objetivo="suscribio", positivo="Sí"):
 
 Comenzamos analizando los datos crudos: revisamos una muestra, los metadatos y un resumen estadístico descriptivo.
 
-```{python}
-#| echo: true
+```{python, echo=FALSE}
 # Carga del dataset
 df_original = pd.read_csv(RUTA_DATOS, sep=";")
 print(f"Dimensiones: {df_original.shape[0]:,} filas x {df_original.shape[1]} columnas")
 
-muestra = (df_original.head().T.rename(columns=lambda c: f"fila {c}")
-           .reset_index(names="variable").astype(str))
+muestra = df_original.head()
 ```
 
+<!--
 ```{r}
 #| label: tbl-muestra
 #| tbl-cap: "Primeros cinco registros del dataset original (filas y columnas transpuestas)."
 tabla(py$muestra)
 ```
+-->
 
-```{python}
-#| echo: true
+```{python, echo=FALSE} 
 # Metadata: nombres de columnas, tipos de dato y valores no nulos
 df_original.info()
 ```
 
-```{python}
-#| echo: true
+
+```{python, echo=FALSE}  
 # Estadísticas de las variables numéricas y de las categóricas
 describe_numericas = df_original.describe().T.reset_index(names="variable")
 describe_categoricas = (df_original.describe(include="object").T
@@ -275,32 +250,33 @@ describe_categoricas = (df_original.describe(include="object").T
 
 ```{r}
 #| label: tbl-describe-num
-#| tbl-cap: "Estadísticas descriptivas de las variables numéricas del dataset original."
+#| tbl-cap: "Estadísticas descriptivas de las variables numéricas"
 tabla(py$describe_numericas, ancha = TRUE)
 ```
 
 ```{r}
 #| label: tbl-describe-cat
-#| tbl-cap: "Estadísticas descriptivas de las variables categóricas del dataset original."
+#| tbl-cap: "Estadísticas descriptivas de las variables categóricas"
 tabla(py$describe_categoricas)
 ```
 
 **Observaciones de la estructura del dataset**
 
-- El dataset contiene **41,188 registros y 21 columnas**, lo que coincide con la metadata oficial. Cada fila representa un contacto de la campaña con un cliente.
-- Hay **10 variables numéricas** (5 enteras y 5 decimales) y **11 variables de tipo texto** (`object`), entre ellas la variable objetivo `y`. Ninguna columna presenta valores nulos explícitos.
-- Las primeras estadísticas (@tbl-describe-num) ya muestran rasgos que se analizan más adelante:
-  - `duration` tiene una media de 258 segundos, pero un máximo de 4,918 (82 minutos): hay llamadas excepcionalmente largas.
-  - En `pdays` la mediana y los cuartiles valen 999, lo que confirma que los clientes nunca contactados dominan la variable.
-  - Los indicadores macroeconómicos (`emp.var.rate`, `euribor3m`, `nr.employed`) tienen una mediana muy superior a su media, señal de que los datos se concentran en periodos de tasas altas y de que existe un grupo de observaciones con valores bajos.
-- En las categóricas (@tbl-describe-cat), las modas son: `admin.` en empleo, `married` en estado civil, `university.degree` en nivel de educación, `cellular` en tipo de contacto y `may` en mes. La moda de `y` es `no`, con 36,548 casos.
+- El dataset contiene **41,188 registros y 21 columnas**, lo que coincide con la metadata oficial. 
+- Cada fila representa un contacto de la campaña con un cliente.
+- Hay **10 variables numéricas** (5 enteras y 5 decimales) y **11 variables de tipo texto** (`object`), entre ellas la variable objetivo `y`, ninguna columna presenta valores nulos aparentemente.
+- Del análisis descriptivio (@tbl-describe-num) notamos lo siguiente:
+  - `duration` tiene una media de 258 segundos, pero hay llamadas excepcionalmente largas que llegan a un máximo de 4,918 (82 minutos).
+  - En `pdays` la mediana y los cuartiles valen 999, por ende más del 75% de clientes nunca fueron contactados.
+  - Los indicadores macroeconómicos (`emp.var.rate`, `euribor3m`, `nr.employed`) tienen una mediana muy superior a su media, señal de que los datos se concentran en periodos de tasas altas y de que existe un  grupo de un periodo de índices económicos bajos.
+- En las categóricas (@tbl-describe-cat), las modas son: `admin.` en empleo, `married` en estado civil, `university.degree` en nivel de educación, `cellular` en tipo de contacto y `may` en mes. 
+- La moda de `y` es `no`, con 36,548 casos.
 
 ## Distribución de valores nulos
 
-La documentación del dataset indica que los atributos categóricos usan la etiqueta `"unknown"` cuando el dato no está disponible. Estos valores se consideran **nulos implícitos** y los cuantificamos por variable.
+La documentación del dataset indica que los atributos categóricos usan la etiqueta `"unknown"` cuando el dato no está disponible, por ende consideraremos estos valores **nulos** y los cuantificamos por variable.
 
-```{python}
-#| echo: true
+```{python, echo=FALSE} 
 nulos = pd.DataFrame({
     "nulos_NaN": df_original.isnull().sum(),
     "nulos_unknown": (df_original == "unknown").sum(),
@@ -321,8 +297,7 @@ tabla_unknown = nulos_unknown.reset_index(names="variable")
 tabla(py$tabla_unknown)
 ```
 
-```{python}
-#| echo: true
+```{python, echo=FALSE} 
 #| label: fig-unknown
 #| fig-cap: "Porcentaje de valores desconocidos ('unknown') por variable."
 #| out-width: "80%"
@@ -337,20 +312,18 @@ mostrar_figura()
 
 **Observaciones de valores desconocidos**
 
-Hay seis variables categóricas con valores nulos (@fig-unknown):
+Se encontraron seis variables categóricas con valores nulos (@fig-unknown).
 
-- `default` (mora) concentra el **20.87%** de nulos. Es un volumen demasiado grande para eliminar esas filas sin perder una quinta parte de la muestra.
 - `education` presenta un 4.20% de desconocidos, `housing` y `loan` un 2.40% cada una, y `job` y `marital` están por debajo del 1%.
-- La calidad del atributo de mora (`default`) es la más afectada y, dado que es de los más relevantes en banca, realizaremos un tratamiento adicional en la sección de preprocesamiento evaluando su relación con la aceptación.
+- `default` (mora) concentra el **20.87%** de nulos, entonces la calidad de la variable es la más afectada y dado que es de los más relevantes en banca buscaremos preservarla, para ello realizaremos un tratamiento adicional en la sección 3 de preprocesamiento evaluando su relación con la aceptación.
 
-Note que la cantidad de nulos coincide entre `housing` y `loan`. Esto amerita revisar si el grupo de nulos en ambas variables es el mismo o es distinto, lo que queda pendiente para la sección de identificación y validación de nulos.
+Note que la cantidad de nulos coincide entre `housing` y `loan`, esto amerita revisar si el grupo de nulos en ambas variables es el mismo o es distinto, lo que queda pendiente para la sección de identificación y validación de nulos.
 
 ## Balance de datos respecto a la aceptación de depósitos
 
 Revisamos la proporción de clientes que suscribieron el depósito para evitar sesgos en el análisis por posibles desbalances.
 
-```{python}
-#| echo: true
+```{python, echo=FALSE} 
 balance = tabla_frecuencias(df_original["y"])
 ratio = balance.loc["no", "frecuencia"] / balance.loc["yes", "frecuencia"]
 print(f"Ratio de desbalance: 1 : {ratio:.2f}")
@@ -364,11 +337,13 @@ tabla_balance = balance.reset_index(names="y")
 tabla(py$tabla_balance)
 ```
 
-```{python}
-#| echo: true
+\newpage
+
+```{python, echo=FALSE} 
 #| label: fig-balance
 #| fig-cap: "Distribución de la variable objetivo (y)."
 #| out-width: "60%"
+#| fig-pos: "htbp"
 plt.figure(figsize=(6, 4.5))
 ax = sns.countplot(x=df_original["y"], order=["no", "yes"], color="steelblue")
 ax.bar_label(ax.containers[0], fmt="{:,.0f}")
@@ -392,8 +367,7 @@ En esta etapa hacemos el tratamiento correspondiente según lo observado en la s
 
 ## Valores duplicados
 
-```{python}
-#| echo: true
+```{python, echo=FALSE} 
 df = df_original.copy()
 
 n_duplicados = df.duplicated().sum()
@@ -406,14 +380,8 @@ ejemplo_duplicados = (df[df.duplicated(keep=False)]
                       .reset_index(names="variable").astype(str))
 ```
 
-```{r}
-#| label: tbl-duplicados
-#| tbl-cap: "Ejemplo de filas duplicadas (filas y columnas transpuestas)."
-tabla(py$ejemplo_duplicados)
-```
 
-```{python}
-#| echo: true
+```{python, echo=FALSE} 
 filas_antes = len(df)
 df = df.drop_duplicates().reset_index(drop=True)
 print(f"Filas antes: {filas_antes:,} | Filas después: {len(df):,} | "
@@ -422,19 +390,20 @@ print(f"Filas antes: {filas_antes:,} | Filas después: {len(df):,} | "
 
 **Observaciones sobre duplicados**
 
-- Se encontraron **12 filas idénticas** en las 21 variables, incluidas la duración exacta de la llamada, el día, el mes y los cinco indicadores macroeconómicos. Representan apenas el **0.029%** del total.
-- El dataset no tiene un identificador de cliente, por lo que no es posible confirmar si son dos personas distintas con características idénticas. Sin embargo, coincidir en todos los atributos, incluida la duración al segundo, es muy improbable y apunta a un error de registro.
+- Se encontraron **12 filas idénticas** en las 21 variables, incluidas la duración exacta de la llamada, el día, el mes y los cinco indicadores macroeconómicos. 
+- Representan apenas el **0.029%** del total.
+- El dataset no tiene un identificador de cliente, por lo que no es posible confirmar si son dos personas distintas con características idénticas. Sin embargo, coincidir en todos los atributos incluida la duración al segundo, es muy improbable y apunta a un error de registro.
 
 Se decidió **eliminarlos**.
 
-**Justificación:** la eliminación no altera las distribuciones, y mantenerlos contaría dos veces el mismo contacto. El dataset de trabajo queda con **41,176 registros**.
+**Justificación:** la eliminación no altera las distribuciones, y mantenerlos contaría dos veces el mismo contacto y el dataset varia apenas en 12 filas quedando con con **41,176 registros**.
 
 ## Cambio de nombre de las columnas
 
 Las columnas se renombran al español con nombres descriptivos y sin puntos (ver @tbl-variables). Esto facilita la lectura del análisis y evita errores al referirse a nombres como `emp.var.rate`.
 
 ```{python}
-#| echo: true
+#| echo: false
 nombres_columnas = {
     "age": "edad",
     "job": "empleo",
@@ -466,14 +435,14 @@ for i in range(0, len(df.columns), 6):
 
 ## Identificación y validación de los valores nulos
 
-En el contexto bancario, datos como la mora o los préstamos provienen de centrales de riesgo y de los sistemas del banco (en Perú, la SBS). Por eso, para decidir qué hacer con los valores nulos aplicamos una **validación descriptiva**: comparamos la tasa de aceptación en el grupo de nulos con la tasa general y con las tasas de las categorías conocidas.
+En el contexto bancario, datos como la mora o los préstamos provienen de centrales de riesgo y de los sistemas del banco (en Perú, la SBS). Entonces no podemos asumir que simplemente no fueron regirtados, para decidir qué hacer con los valores nulos aplicamos una **validación descriptiva** comparando la tasa de aceptación en el grupo de nulos con la tasa general y con las tasas de las categorías conocidas.
 
 La idea es determinar si el grupo de clientes con dato desconocido contiene información útil sobre los clientes que aceptaron el depósito o si solamente es ruido. Si es lo primero, añadimos una categoría nueva; si no, imputamos con la moda para no alterar la distribución.
 
 Adicionalmente, como encontramos la misma cantidad de nulos en vivienda (`housing`) y préstamo (`loan`), revisamos si los nulos de ambas variables corresponden a los mismos registros.
 
 ```{python}
-#| echo: true
+#| echo: false
 columnas_unknown = ["mora", "educacion", "vivienda", "prestamo", "empleo", "estado_civil"]
 tasa_general = 100 * (df["suscribio"] == "yes").mean()
 print(f"Tasa general de aceptación: {tasa_general:.2f}%")
@@ -537,7 +506,7 @@ Con base en la validación anterior, primero se convierten los `"unknown"` en va
 Se prefiere la imputación antes que la eliminación de filas para no perder los datos válidos del resto de variables de esos clientes.
 
 ```{python}
-#| echo: true
+#| echo: false
 # Pasamos los valores "unknown" a NaN
 df = df.replace("unknown", np.nan)
 print("Valores nulos por variable después de la conversión:")
@@ -562,7 +531,7 @@ La variable `dias_previos` usa el valor **999** para indicar que el cliente **nu
 Por lo tanto, creamos una nueva variable `dias_desde_contacto`, igual a `dias_previos` pero con `NaN` cuando el valor es 999. Estos nulos **no se imputan**, porque representan un dato que no aplica (el contacto nunca ocurrió) y cualquier valor inventado sería engañoso. La información de si hubo o no un contacto previo se conserva en una nueva variable categórica (sección de creación de nuevas variables).
 
 ```{python}
-#| echo: true
+#| echo: false
 nunca_contactados = (df["dias_previos"] == 999).sum()
 print(f"Registros con dias_previos = 999: {nunca_contactados:,} "
       f"({100 * nunca_contactados / len(df):.2f}%)")
@@ -579,7 +548,7 @@ print(f"Media de dias_desde_contacto sin el 999: {df['dias_desde_contacto'].mean
 Las variables categóricas se convierten al tipo `category`. En las variables ordinales (`educacion`, `mes`, `dia_semana`) se define el orden natural de sus niveles, lo que permite que tablas y gráficos respeten ese orden. La variable objetivo se recodifica como `"Sí"` / `"No"` para facilitar la lectura.
 
 ```{python}
-#| echo: true
+#| echo: false
 df["suscribio"] = df["suscribio"].map({"yes": "Sí", "no": "No"})
 orden_educacion = ["illiterate", "basic.4y", "basic.6y", "basic.9y", "high.school",
                    "professional.course", "university.degree", "desconocido"]
@@ -618,7 +587,7 @@ Se crean nuevas variables derivadas de acuerdo con los objetivos propuestos, med
 - **`contacto_previo`:** distinguir a los clientes que tuvieron contactos anteriores de aquellos sin contacto previo permite evaluar si el historial de interacción se asocia con diferencias en la aceptación del depósito a plazo.
 
 ```{python}
-#| echo: true
+#| echo: false
 # Duración en minutos
 df["duracion_min"] = df["duracion"] / 60
 
@@ -655,7 +624,7 @@ tabla(py$frecuencias_nuevas)
 ```
 
 ```{python}
-#| echo: true
+#| echo: false
 print(f"Dimensiones finales: {df.shape[0]:,} filas x {df.shape[1]} columnas\n")
 df.info()
 ```
@@ -683,7 +652,7 @@ Las variables se agrupan en tres conjuntos:
 - **Categóricas de la campaña:** `tipo_contacto`, `mes`, `dia_semana`, `resultado_previo` y `contacto_previo`.
 
 ```{python}
-#| echo: true
+#| echo: false
 variables_numericas = ["edad", "duracion_min", "campana", "dias_desde_contacto",
                        "contactos_previos", "tasa_var_empleo", "ipc", "icc",
                        "euribor3m", "num_empleados"]
@@ -703,7 +672,7 @@ variables_categoricas_campana = ["tipo_contacto", "mes", "dia_semana",
 **Nota:** para cada variable, los valores fuera del rango [Q1 - 1.5·IQR, Q3 + 1.5·IQR] se consideran atípicos, según la regla del boxplot.
 
 ```{python}
-#| echo: true
+#| echo: false
 resumen = resumen_numerico(df, variables_numericas)
 
 tendencia_central = resumen[["n", "media", "mediana", "moda"]].reset_index()
@@ -736,15 +705,15 @@ tabla(py$atipicos)
 | Variable | Hallazgos |
 |---|-------------|
 | `edad` | Media de 40.02 años, mediana de 38 y moda de 31: la media supera a la mediana por la presencia de clientes mayores. La desviación estándar es de 10.42 años y el 50% central está entre 32 y 47 años (IQR = 15). Hay 468 atípicos (1.14%), todos por encima de 69.5 años. |
-| `duracion_min` | La media de 4.31 minutos supera a la mediana de 3.00: la mayoría de llamadas es corta, pero hay llamadas muy largas. El rango (81.97 min) es enorme frente al IQR (3.62 min). El 7.20% de las llamadas (2,963) supera los 10.74 minutos y se considera atípica. |
+| `duracion en minutos` | La media de 4.31 minutos supera a la mediana de 3.00: la mayoría de llamadas es corta, pero hay llamadas muy largas. El rango (81.97 min) es enorme frente al IQR (3.62 min). El 7.20% de las llamadas (2,963) supera los 10.74 minutos y se considera atípica. |
 | `campana` | La moda es 1 contacto y la mediana, 2. La media (2.57) se eleva por un grupo reducido de clientes contactados de forma reiterada, hasta 56 veces. El 5.84% (2,406 clientes) recibió más de 6 contactos; este sería el segmento de **insistencia excesiva**. |
-| `dias_desde_contacto` | Para los 1,515 clientes con historial, la media (6.01) y la mediana (6) casi coinciden, con un IQR de 3 a 7 días. Los contactos previos suelen ser recientes, alrededor de una semana antes. El 5.41% supera los 13 días. |
-| `contactos_previos` | La media es 0.17 y la moda, 0. El IQR es 0 porque más del 75% de los clientes nunca fue contactado; por eso, según el IQR, **cualquier** cliente con al menos un contacto previo (13.66%) es atípico. En este caso no se trata de errores, sino del grupo minoritario con historial. |
-| `tasa_var_empleo` | Varía en un rango de -3.4 a 1.4, sin atípicos. La mediana (1.10) es muy superior a la media (0.08): indica la existencia de periodos de crecimiento y de decrecimiento del empleo. |
+| `dias desde contacto` | Para los 1,515 clientes con historial, la media (6.01) y la mediana (6) casi coinciden, con un IQR de 3 a 7 días. Los contactos previos suelen ser recientes, alrededor de una semana antes. El 5.41% supera los 13 días. |
+| `contactos previos` | La media es 0.17 y la moda, 0. El IQR es 0 porque más del 75% de los clientes nunca fue contactado; por eso, según el IQR, **cualquier** cliente con al menos un contacto previo (13.66%) es atípico. En este caso no se trata de errores, sino del grupo minoritario con historial. |
+| `tasa var empleo` | Varía en un rango de -3.4 a 1.4, sin atípicos. La mediana (1.10) es muy superior a la media (0.08): indica la existencia de periodos de crecimiento y de decrecimiento del empleo. |
 | `ipc` | Tiene muy poca dispersión (desviación estándar de 0.58 sobre una media de 93.58; rango de 2.57 puntos). Es la variable más estable del grupo. |
 | `icc` | Media de -40.50 y mediana de -41.80: la confianza del consumidor fue negativa en todo el periodo, reflejo del contexto de crisis. Hay 446 atípicos (1.08%) en el extremo menos pesimista (-26.9). |
 | `euribor3m` | La mediana (4.86%) está muy por encima de la media (3.62%) y la desviación estándar es alta (1.73) para una tasa de interés. Esto evidencia dos contextos distintos: tasas previas a la crisis cercanas a 5% y tasas posteriores cercanas a 1%. |
-| `num_empleados` | Media de 5,167 y mediana de 5,191, con un IQR de 129. No presenta atípicos, pero su distribución está concentrada en un rango pequeño de valores. |
+| `num empleados` | Media de 5,167 y mediana de 5,191, con un IQR de 129. No presenta atípicos, pero su distribución está concentrada en un rango pequeño de valores. |
 
 : Interpretación de las medidas de tendencia central y de dispersión. {#tbl-interpretacion-medidas}
 
@@ -755,7 +724,7 @@ En síntesis, las variables que describen las llamadas (`duracion_min`, `campana
 Validamos el análisis de dispersión previo visualizando los boxplots respectivos (@fig-boxplots).
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-boxplots
 #| fig-cap: "Boxplots de las variables numéricas."
 fig, ejes = plt.subplots(2, 5, figsize=(20, 8))
@@ -792,7 +761,7 @@ tabla(py$cinco_numeros)
 El histograma muestra la distribución de frecuencias. La forma de la distribución se describe visualmente y se apoya en la comparación entre la media y la mediana: cuando la media es mayor que la mediana, la distribución tiene una cola hacia valores altos (@fig-histogramas).
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-histogramas
 #| fig-cap: "Histogramas de las variables numéricas."
 fig, ejes = plt.subplots(2, 5, figsize=(20, 8))
@@ -819,7 +788,7 @@ tabla(py$forma)
 ```
 
 ```{python}
-#| echo: true
+#| echo: false
 clases_edad = pd.cut(df["edad"], bins=range(10, 110, 10), right=False)
 frecuencia_edad = (tabla_frecuencias(clases_edad).sort_index()
                    .reset_index(names="clase_edad"))
@@ -857,7 +826,7 @@ tabla(py$frecuencia_campana)
 Para cada variable categórica se calcula la tabla de frecuencia absoluta y relativa, y se grafica con un gráfico de barras ordenado de mayor a menor frecuencia (salvo en las variables ordinales, que respetan su orden natural).
 
 ```{python}
-#| echo: true
+#| echo: false
 def grafico_barras_categoricas(datos, columnas, titulo, filas, cols):
     """Grafica un countplot por cada variable categórica."""
     fig, ejes = plt.subplots(filas, cols, figsize=(6 * cols, 4.8 * filas))
@@ -884,7 +853,7 @@ def frecuencias_categoricas(datos, columnas):
 ```
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-barras-perfil
 #| fig-cap: "Gráficos de barras de las variables categóricas del perfil del cliente."
 grafico_barras_categoricas(df, variables_categoricas_perfil,
@@ -911,7 +880,7 @@ tabla(py$frecuencias_perfil)
 **Implicancia:** la campaña contactó mayoritariamente a adultos casados con empleo administrativo, técnico u obrero (@fig-barras-perfil). Los grupos minoritarios (estudiantes, jubilados y clientes de 65 años o más) reciben pocos contactos. En el análisis multivariado se verifica si ese bajo contacto coincide o no con una baja aceptación.
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-barras-campana
 #| fig-cap: "Gráficos de barras de las variables categóricas de la campaña y del historial de contacto."
 grafico_barras_categoricas(df, variables_categoricas_campana,
@@ -943,24 +912,34 @@ Para el análisis de relaciones entre variables numéricas se usan las nueve var
 ### Covarianza
 
 ```{python}
-#| echo: true
+#| echo: false
 variables_relacion = ["edad", "duracion_min", "campana", "contactos_previos",
                       "tasa_var_empleo", "ipc", "icc", "euribor3m", "num_empleados"]
 
 matriz_covarianza = df[variables_relacion].cov()
 tabla_covarianza = matriz_covarianza.reset_index(names="variable")
+tabla_covarianza_f6 = tabla_covarianza.iloc[:,:6]
+tabla_covarianza_f12 = tabla_covarianza.iloc[:,6:12]
+tabla_covarianza_rest = tabla_covarianza.iloc[:,12:]
 ```
 
 ```{r}
-#| label: tbl-covarianza
-#| tbl-cap: "Matriz de covarianza de las variables numéricas (la diagonal contiene las varianzas)."
-tabla(py$tabla_covarianza, ancha = TRUE)
+#| label: tbl-covarianza1
+#| tbl-cap: "Matriz de covarianza (Primeras 6 numéricas)"
+tabla(py$tabla_covarianza_f6, ancha = TRUE)
 ```
+
+```{r}
+#| label: tbl-covarianza2
+#| tbl-cap: "Matriz de covarianza (Últimas 3 numéricas)."
+tabla(py$tabla_covarianza_f12, ancha = TRUE)
+```
+
 
 **Análisis de la covarianza**
 
 - La diagonal contiene las varianzas: destaca la de `num_empleados` (5,220.26), muy superior al resto por la escala de la variable (miles de empleados), y la de `edad` (108.59).
-- **Signo de las relaciones** (@tbl-covarianza):
+- **Signo de las relaciones** (@tbl-covarianza1):
   - Los indicadores macroeconómicos tienen **covarianzas positivas entre sí**: `tasa_var_empleo` con `euribor3m` (2.65), con `num_empleados` (102.94) y con `ipc` (0.70); `euribor3m` con `num_empleados` (118.44). Tienden a subir y bajar juntos.
   - `contactos_previos` tiene **covarianza negativa** con los indicadores macroeconómicos (-0.39 con `euribor3m` y -17.93 con `num_empleados`). Los clientes con más contactos previos se concentran en los periodos de tasas y empleo bajos.
   - `duracion_min` y `campana` covarían negativamente (-0.86): los clientes que recibieron más contactos tienden a tener llamadas más cortas.
@@ -971,8 +950,8 @@ tabla(py$tabla_covarianza, ancha = TRUE)
 
 Usamos la correlación de Pearson, que lleva la covarianza al rango [-1, 1] y permite comparar la intensidad de la relación lineal entre pares de variables con distintas unidades (@fig-correlacion).
 
-```{python}
-#| echo: true
+```{python} 
+#| echo: false
 #| label: fig-correlacion
 #| fig-cap: "Mapa de calor de la correlación de Pearson entre variables numéricas."
 #| out-width: "85%"
@@ -1025,7 +1004,7 @@ tabla(py$pares_colineales, digitos = 3)
 Se compara la distribución de las variables numéricas entre los clientes que suscribieron y los que no, mediante boxplots lado a lado (@fig-boxplots-suscripcion).
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-boxplots-suscripcion
 #| fig-cap: "Boxplots comparativos de variables numéricas según la suscripción."
 variables_comparar = ["edad", "duracion_min", "campana", "euribor3m", "icc", "num_empleados"]
@@ -1070,8 +1049,8 @@ tabla(py$medidas_por_grupo)
 
 Exploramos si la relación entre el mes de contacto y la aceptación coincide con cambios en el índice de confianza del consumidor. Para ello se combinan boxplots del índice por mes con la tasa de aceptación mensual (@fig-icc-mes y @tbl-aceptacion-mes).
 
-```{python}
-#| echo: true
+```{python} 
+#| echo: false
 #| label: fig-icc-mes
 #| fig-cap: "Índice de confianza del consumidor según el mes de contacto."
 plt.figure(figsize=(12, 5))
@@ -1107,7 +1086,7 @@ tabla(py$tabla_mes)
 Se superponen los histogramas de cada grupo de la variable objetivo. Como el grupo que no suscribió es casi ocho veces más grande, cada histograma se normaliza por separado (densidad), de modo que se comparan las **formas** de las distribuciones y no sus tamaños (@fig-histogramas-suscripcion).
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-histogramas-suscripcion
 #| fig-cap: "Histogramas de edad, duración y Euribor según la suscripción."
 variables_hist = ["edad", "duracion_min", "euribor3m"]
@@ -1162,8 +1141,8 @@ tabla(py$aceptacion_euribor)
 
 Las barras agrupadas muestran la frecuencia de cada categoría separada por la variable objetivo. Como el grupo "No" domina en todas las categorías, cada gráfico se acompaña de una tabla cruzada con la **tasa de aceptación** (frecuencia relativa por fila), que es la medida comparable entre categorías.
 
-```{python}
-#| echo: true
+```{python} 
+#| echo: false
 def barras_agrupadas(datos, columnas, titulo, filas, cols):
     fig, ejes = plt.subplots(filas, cols, figsize=(7 * cols, 5 * filas))
     ejes = ejes.flatten()
@@ -1190,8 +1169,8 @@ def tasas_por_variable(datos, columnas):
                               "suscripciones", "tasa_aceptacion_%"]]
 ```
 
-```{python}
-#| echo: true
+```{python} 
+#| echo: false
 #| label: fig-barras-agrupadas-campana
 #| fig-cap: "Variables de la campaña según la suscripción."
 columnas_campana = ["resultado_previo", "contacto_previo", "tipo_contacto", "tramo_duracion"]
@@ -1215,8 +1194,8 @@ tabla(py$tasas_campana)
 
 **Implicancia:** para priorizar clientes antes de contactarlos, la señal más útil disponible es el **historial de la relación** (resultado y existencia de contacto previo), seguida del tipo de teléfono (@fig-barras-agrupadas-campana).
 
-```{python}
-#| echo: true
+```{python} 
+#| echo: false
 #| label: fig-barras-agrupadas-perfil
 #| fig-cap: "Variables del perfil del cliente según la suscripción."
 columnas_perfil = ["grupo_etario", "empleo", "mora", "educacion"]
@@ -1244,8 +1223,8 @@ tabla(py$tasas_perfil)
 
 Se analizan siete pares de variables numéricas, coloreando los puntos según la suscripción. Los cinco primeros pares corresponden a los indicadores macroeconómicos (@fig-dispersion-macro) y los dos últimos, a variables que describen las llamadas (@fig-dispersion-operativas).
 
-```{python}
-#| echo: true
+```{python} 
+#| echo: false
 #| label: fig-dispersion-macro
 #| fig-cap: "Diagramas de dispersión de los indicadores macroeconómicos."
 pares_macro = [("euribor3m", "num_empleados"), ("tasa_var_empleo", "euribor3m"),
@@ -1256,7 +1235,7 @@ fig, ejes = plt.subplots(2, 3, figsize=(20, 11))
 ejes = ejes.flatten()
 for eje, (x, y) in zip(ejes, pares_macro):
     sns.scatterplot(data=df, x=x, y=y, hue="suscribio", hue_order=orden_objetivo,
-                    palette="Set2", alpha=1, s=25, ax=eje)
+                    palette="Set2", alpha=1, s=120, ax=eje, linewidth=0)
     eje.set_title(f"{y} vs. {x}")
 ejes[-1].set_visible(False)
 plt.suptitle("Diagramas de dispersión de los indicadores macroeconómicos", fontsize=15)
@@ -1290,7 +1269,7 @@ tabla(py$resumen_macro, digitos = 3)
 - El valor del coeficiente de Pearson por sí solo no describe la estructura de los datos; fue imprescindible graficar.
 
 ```{python}
-#| echo: true
+#| echo: false
 #| label: fig-dispersion-operativas
 #| fig-cap: "Diagramas de dispersión de variables que describen las llamadas."
 pares_operativos = [("edad", "duracion_min"), ("campana", "duracion_min")]
@@ -1298,7 +1277,7 @@ pares_operativos = [("edad", "duracion_min"), ("campana", "duracion_min")]
 fig, ejes = plt.subplots(1, 2, figsize=(16, 6))
 for eje, (x, y) in zip(ejes, pares_operativos):
     sns.scatterplot(data=df, x=x, y=y, hue="suscribio", hue_order=orden_objetivo,
-                    palette="Set2", alpha=0.4, s=15, ax=eje)
+                    palette="Set2", alpha=1, s=50, ax=eje)
     eje.set_title(f"{y} vs. {x}")
 plt.suptitle("Diagramas de dispersión de variables operativas de la llamada", fontsize=15)
 mostrar_figura()
