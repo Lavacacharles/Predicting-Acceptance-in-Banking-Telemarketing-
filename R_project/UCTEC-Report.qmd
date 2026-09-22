@@ -134,9 +134,9 @@ Usamos la libreria reticulate para ejecutar codigo de python y su enviroment
 
 ```{r}
 #| echo: true
-# library(reticulate)
-# use_virtualenv("r-reticulate", required = TRUE)
-# py_config()
+library(reticulate)
+use_virtualenv("r-reticulate", required = TRUE)
+py_config()
 ```
 
 
@@ -145,19 +145,19 @@ Python code:
 
 ```{python}
 #| echo: true
-# import numpy as np 
-# import pandas as pd 
-# import seaborn as sns 
-# import matplotlib.pyplot as plt
-# import time
-# data = pd.read_csv('datos/breast_cancer.csv')
-# data.head()
+import numpy as np 
+import pandas as pd 
+import seaborn as sns 
+import matplotlib.pyplot as plt
+import time
+data = pd.read_csv('datos/breast_cancer.csv')
+data.head()
 ```
 
 ```{python}
 #| echo: true
-# col = data.columns       
-# print(col)
+col = data.columns       
+print(col)
 ```
 
 
@@ -280,7 +280,7 @@ En contraste, Anta y especialmente Canchis registran volúmenes de producción t
 
 ```{r}
 #| fig-cap: Gráfica de cajas de las variables id, producción y área sembrada.
-# ds_plot_box_single(muestra)
+ds_plot_box_single(muestra)
 ```
 **Variable produccion_tn (Producción en toneladas)**
 

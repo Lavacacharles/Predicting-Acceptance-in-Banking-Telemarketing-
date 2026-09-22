@@ -1,0 +1,435 @@
+---
+title: "PROYECTO FINAL"
+subtitle: "Aceptación de depósitos a plazo en campañas de telemarketing bancario"
+author: "Juan Aquino Espinoza, Angel Mora, Leonardo Cueva y Adrian Varillas"
+institute: |
+  CIENCIA DE DATOS E INTELIGENCIA ARTIFICIAL \newline
+  Introducción a Ciencia de Datos e Inteligencia Artificial \newline
+  Docente: Walter Quispe Vargas
+date: "2026-2"
+fig-height: 5
+fig-width: 8
+lang: es
+format:
+  beamer:
+    aspectratio: 169
+    navigation: empty
+    slide-level: 2
+    section-titles: true
+    header-includes: |
+      \providecommand{\pandocbounded}[1]{#1}
+      \definecolor{utec}{rgb}{0.0, 0.7451, 0.8745}
+      \setbeamercolor{structure}{fg=utec}
+      \setbeamercolor{frametitle}{fg=utec!70!black}
+      \setbeamercolor{title}{fg=utec!70!black}
+      \setbeamerfont{frametitle}{series=\bfseries}
+      \setbeamertemplate{navigation symbols}{}
+      \setbeamertemplate{footline}[frame number]
+      \titlegraphic{\includegraphics[height=1.3cm]{_extensions/numbats/report/logo.png}}
+      \logo{\includegraphics[height=0.45cm]{_extensions/numbats/report/logo.png}\hspace{0.2cm}\vspace{-0.1cm}}
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup, include=FALSE}
+library(reticulate)
+use_virtualenv("r-reticulate", required = TRUE)
+knitr::opts_chunk$set(out.width = "100%", fig.align = "center")
+```
+
+```{python}
+#| include: false
+# Carga y limpieza (mismas decisiones del reporte), sin mostrar el código
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+sns.set_theme(style="darkgrid", font_scale=1.1)
+AZUL = "steelblue"
+ORDEN = ["No", "Sí"]
+
+df_original = pd.read_csv("../bank-additional/bank-additional-full.csv", sep=";")
+
+# Valores desconocidos antes de limpiar
+pct_unknown = 100 * (df_original == "unknown").mean()
+pct_unknown = pct_unknown[pct_unknown > 0].sort_values(ascending=False)
+
+# 1. Duplicados
+df = df_original.drop_duplicates().reset_index(drop=True)
+
+# 2. Nombres en español
+df = df.rename(columns={
+    "age": "edad", "job": "empleo", "marital": "estado_civil", "education": "educacion",
+    "default": "mora", "housing": "vivienda", "loan": "prestamo",
+    "contact": "tipo_contacto", "month": "mes", "day_of_week": "dia_semana",
+    "duration": "duracion", "campaign": "campana", "pdays": "dias_previos",
+    "previous": "contactos_previos", "poutcome": "resultado_previo",
+    "emp.var.rate": "tasa_var_empleo", "cons.price.idx": "ipc", "cons.conf.idx": "icc",
+    "nr.employed": "num_empleados", "y": "suscribio",
+})
+
+# 3. Valores desconocidos
+df = df.replace("unknown", np.nan)
+for col in ["mora", "educacion"]:
+    df[col] = df[col].fillna("desconocido")
+for col in ["empleo", "estado_civil", "vivienda", "prestamo"]:
+    df[col] = df[col].fillna(df[col].mode()[0])
+
+# 4. dias_previos = 999 significa "nunca contactado"
+df["dias_desde_contacto"] = df["dias_previos"].where(df["dias_previos"] != 999)
+df["contacto_previo"] = np.where(df["dias_previos"] != 999, "Sí", "No")
+
+# 5. Tipos y nuevas variables
+df["suscribio"] = df["suscribio"].map({"yes": "Sí", "no": "No"})
+orden_meses = ["mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+df["mes"] = pd.Categorical(df["mes"], categories=orden_meses, ordered=True)
+df["duracion_min"] = df["duracion"] / 60
+df["tramo_duracion"] = pd.cut(
+    df["duracion_min"], bins=[0, 1, 2, 3, 5, 10, df["duracion_min"].max()],
+    labels=["0-1", "1-2", "2-3", "3-5", "5-10", "más de 10"], include_lowest=True)
+df["grupo_etario"] = pd.cut(
+    df["edad"], bins=[16, 24, 34, 44, 54, 64, df["edad"].max()],
+    labels=["17-24", "25-34", "35-44", "45-54", "55-64", "65 o más"])
+df["tramo_campana"] = pd.cut(
+    df["campana"], bins=[0, 1, 2, 3, 5, 10, df["campana"].max()],
+    labels=["1", "2", "3", "4-5", "6-10", "más de 10"])
+
+tasa_general = 100 * (df["suscribio"] == "Sí").mean()
+
+
+def tasa_por(columna):
+    """Tasa de aceptación (%) por categoría."""
+    return 100 * pd.crosstab(df[columna], df["suscribio"], normalize="index")["Sí"]
+
+
+def barras_tasa(tasas, titulo, eje, rotacion=0, etiqueta_x=""):
+    """Barras de la tasa de aceptación con la tasa general como referencia."""
+    sns.barplot(x=tasas.index.astype(str), y=tasas.values, color=AZUL, ax=eje)
+    eje.bar_label(eje.containers[0], fmt="%.1f%%", fontsize=10)
+    eje.axhline(tasa_general, color="gray", linestyle="--", linewidth=1.2,
+                label=f"Tasa general ({tasa_general:.2f}%)")
+    eje.set_title(titulo)
+    eje.set_xlabel(etiqueta_x)
+    eje.set_ylabel("Tasa de aceptación (%)")
+    eje.set_ylim(0, tasas.max() * 1.3)
+    eje.tick_params(axis="x", rotation=rotacion)
+    eje.legend(loc="best", fontsize=9)
+```
+
+# Introducción del dataset
+
+## Contexto y objetivo
+
+:::: {.columns}
+
+::: {.column width="55%"}
+- Un banco portugués vende **depósitos a plazo** por telemarketing.
+- Llama de forma masiva a toda su base de clientes.
+- Resultado: alto costo, agentes saturados y clientes molestos.
+
+\vspace{0.3cm}
+
+**Objetivo:** identificar qué características del **cliente**, del **contacto** y del **entorno económico** se asocian con una mayor aceptación.
+:::
+
+::: {.column width="45%"}
+\small
+
+| | |
+|---|---|
+| **Fuente** | UCI, *Bank Marketing* (Moro et al., 2014) |
+| **Registros** | 41,188 contactos |
+| **Variables** | 20 de entrada + 1 objetivo |
+| **Periodo** | Mayo 2008 a noviembre 2010 |
+| **Grupos** | Perfil, campaña, indicadores económicos |
+:::
+
+::::
+
+## El problema en una cifra
+
+:::: {.columns}
+
+::: {.column width="50%"}
+```{python}
+fig, eje = plt.subplots(figsize=(6, 4.2))
+conteo = df_original["y"].map({"no": "No", "yes": "Sí"}).value_counts().reindex(ORDEN)
+sns.barplot(x=conteo.index, y=conteo.values, color=AZUL, ax=eje)
+porcentajes = 100 * conteo / conteo.sum()
+eje.bar_label(eje.containers[0],
+              labels=[f"{c:,}\n({p:.2f}%)" for c, p in zip(conteo, porcentajes)])
+eje.set_title("¿Suscribió un depósito a plazo?")
+eje.set_xlabel("")
+eje.set_ylabel("Número de clientes")
+eje.set_ylim(0, conteo.max() * 1.2)
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="50%"}
+\vspace{0.8cm}
+
+- Solo el **11.27%** de los contactos termina en venta.
+- Por cada venta hay casi **8 llamadas sin éxito** (1 : 7.88).
+- Por eso comparamos **tasas de aceptación** y no conteos.
+:::
+
+::::
+
+# Limpieza y decisiones
+
+## Problemas encontrados y cómo se resolvieron
+
+\small
+
+| Problema encontrado | Decisión |
+|------------------|--------------------|
+| 12 filas idénticas (0.029%) | Eliminarlas: contaban dos veces el mismo contacto |
+| Valores `"unknown"` en 6 variables categóricas | Revisar si el grupo desconocido se comporta distinto |
+| `pdays` = 999 en el 96.32% de los casos | No son días: significa "nunca contactado" |
+| Nombres en inglés y con puntos | Renombrar al español (`emp.var.rate` a `tasa_var_empleo`) |
+| Columnas de texto sin orden | Tipo `category`, con orden en educación y mes |
+| Atípicos en duración, campaña y edad | Conservarlos: son casos reales y de interés |
+
+\normalsize
+\vspace{0.2cm}
+
+Resultado: **41,176 filas y 26 columnas**, sin nulos en las variables originales.
+
+## ¿Qué hacer con los valores desconocidos?
+
+:::: {.columns}
+
+::: {.column width="50%"}
+```{python}
+fig, eje = plt.subplots(figsize=(6, 4.2))
+sns.barplot(x=pct_unknown.index, y=pct_unknown.values, color=AZUL, ax=eje)
+eje.bar_label(eje.containers[0], fmt="%.2f%%", fontsize=10)
+eje.set_title("Porcentaje de 'unknown' por variable")
+eje.set_xlabel("")
+eje.set_ylabel("% de registros")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="50%"}
+**Regla:** comparar la tasa de aceptación del grupo desconocido con la del resto.
+
+- `mora`: acepta **5.15%** frente a 12.88% $\rightarrow$ nueva categoría `"desconocido"`.
+- `educacion`: **14.51%**, la tasa más alta $\rightarrow$ nueva categoría.
+- `vivienda`, `prestamo`, `empleo`, `estado_civil`: tasa parecida a la general o muy pocos casos $\rightarrow$ **moda**.
+:::
+
+::::
+
+## El valor 999 y las nuevas variables
+
+:::: {.columns}
+
+::: {.column width="50%"}
+**`dias_previos` = 999**
+
+- El 96.32% de los clientes nunca fue contactado antes.
+- Con el 999, la media es **962.46 días**.
+- Sin él, la media real es **6.01 días**.
+- Se crea `dias_desde_contacto` (sin el 999) y no se imputa: el dato no aplica.
+:::
+
+::: {.column width="50%"}
+**Variables nuevas con reglas simples**
+
+- `duracion_min`: duración en minutos.
+- `tramo_duracion`: intervalos de minutos.
+- `grupo_etario`: intervalos de edad.
+- `contacto_previo`: Sí / No.
+:::
+
+::::
+
+# Principales hallazgos
+
+## 1. El historial del cliente es la mejor señal
+
+```{python}
+#| out-width: "88%"
+fig, ejes = plt.subplots(1, 2, figsize=(11, 3.9))
+barras_tasa(tasa_por("resultado_previo").reindex(["nonexistent", "failure", "success"]),
+            "Según el resultado de la campaña anterior", ejes[0])
+barras_tasa(tasa_por("contacto_previo").reindex(["No", "Sí"]),
+            "Según si tuvo contacto previo", ejes[1])
+plt.tight_layout()
+plt.show()
+```
+
+- Un éxito previo se asocia con un **65.11%** de aceptación, casi seis veces la tasa general.
+- Solo el 3.68% de los clientes tiene historial, pero es el grupo que más convierte.
+
+## 2. El contexto económico también importa
+
+:::: {.columns}
+
+::: {.column width="58%"}
+```{python}
+fig, eje = plt.subplots(figsize=(6.5, 4.3))
+sns.histplot(data=df, x="euribor3m", hue="suscribio", hue_order=ORDEN, bins=40,
+             stat="density", common_norm=False, element="step", ax=eje)
+eje.set_title("Euribor a 3 meses según la suscripción")
+eje.set_xlabel("euribor3m (%)")
+eje.set_ylabel("Densidad")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="42%"}
+\vspace{0.5cm}
+
+- Euribor menor a 3%: **24.46%** de aceptación.
+- Euribor de 3% o más: solo **4.84%**.
+- Los periodos de tasas bajas (después de la crisis de 2008) coinciden con más ahorro.
+:::
+
+::::
+
+## 3. Los extremos de edad aceptan más
+
+```{python}
+#| out-width: "92%"
+fig, ejes = plt.subplots(1, 2, figsize=(12, 4.1))
+barras_tasa(tasa_por("grupo_etario"), "Según el grupo de edad", ejes[0])
+tasas_empleo = tasa_por("empleo").sort_values(ascending=False)
+barras_tasa(tasas_empleo, "Según el tipo de empleo", ejes[1], rotacion=45)
+plt.tight_layout()
+plt.show()
+```
+
+- 65 años o más: **47.28%**; 17 a 24 años: **23.99%**. Estudiantes y jubilados lideran.
+- Los grupos de 35 a 54 años son los más contactados y los que menos aceptan (8.6%).
+
+## 4. Insistir no funciona
+
+:::: {.columns}
+
+::: {.column width="58%"}
+```{python}
+fig, eje = plt.subplots(figsize=(6.5, 4.3))
+barras_tasa(tasa_por("tramo_campana"), "Según el número de contactos en la campaña",
+            eje, etiqueta_x="Contactos al mismo cliente")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="42%"}
+\vspace{0.5cm}
+
+- 1 contacto: **13.04%**; más de 10: **3.11%**.
+- Desde el tercer contacto la tasa queda por debajo de la media.
+- Por celular se acepta casi el triple que por teléfono fijo (14.74% frente a 5.23%).
+:::
+
+::::
+
+## 5. Mayo: mucho volumen, poca conversión
+
+```{python}
+#| out-width: "92%"
+resumen_mes = pd.DataFrame({
+    "pct_contactos": 100 * df["mes"].value_counts(normalize=True).sort_index(),
+    "tasa": tasa_por("mes"),
+})
+fig, ejes = plt.subplots(1, 2, figsize=(12, 3.9))
+sns.barplot(x=resumen_mes.index.astype(str), y=resumen_mes["pct_contactos"],
+            color="lightsteelblue", ax=ejes[0])
+ejes[0].bar_label(ejes[0].containers[0], fmt="%.1f%%", fontsize=9)
+ejes[0].set_title("Porcentaje de contactos por mes")
+ejes[0].set_xlabel("")
+ejes[0].set_ylabel("% de contactos")
+barras_tasa(resumen_mes["tasa"], "Tasa de aceptación por mes", ejes[1])
+plt.tight_layout()
+plt.show()
+```
+
+- Mayo concentra el **33.43%** de las llamadas y tiene la tasa más baja (**6.44%**).
+- Marzo, septiembre, octubre y diciembre superan el 43% con menos del 2% de las llamadas.
+
+## 6. La duración: muy asociada, pero solo se conoce después
+
+:::: {.columns}
+
+::: {.column width="58%"}
+```{python}
+fig, eje = plt.subplots(figsize=(6.5, 4.3))
+barras_tasa(tasa_por("tramo_duracion"), "Según la duración de la llamada", eje,
+            etiqueta_x="Minutos")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="42%"}
+\vspace{0.5cm}
+
+- De **0.02%** (hasta 1 minuto) a **48.61%** (más de 10 minutos).
+- Útil para guiar a los agentes durante la llamada.
+- **No sirve** para elegir a quién llamar: se conoce recién al terminar.
+:::
+
+::::
+
+## 7. Indicadores económicos que se mueven juntos
+
+:::: {.columns}
+
+::: {.column width="55%"}
+```{python}
+variables_relacion = ["edad", "duracion_min", "campana", "contactos_previos",
+                      "tasa_var_empleo", "ipc", "icc", "euribor3m", "num_empleados"]
+fig, eje = plt.subplots(figsize=(7, 5.6))
+sns.heatmap(df[variables_relacion].corr(), annot=True, fmt=".2f", cmap="coolwarm",
+            vmin=-1, vmax=1, square=True, linewidths=0.5, annot_kws={"size": 8}, ax=eje)
+eje.set_title("Correlación de Pearson")
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="45%"}
+\vspace{0.4cm}
+
+- `tasa_var_empleo`, `euribor3m` y `num_empleados`: **r entre 0.91 y 0.97**.
+- Describen el mismo ciclo económico: basta con usar una (por ejemplo, `euribor3m`).
+- `icc` aporta información distinta (r = 0.28 con la Euribor).
+- Edad, duración y campaña casi no se relacionan entre sí.
+:::
+
+::::
+
+## Conclusiones
+
+- **Priorizar** a los clientes con historial de contacto con el banco.
+- **Limitar la insistencia**: pocas llamadas por cliente.
+- **Planificar** considerando el contexto de tasas de interés y repartir mejor las llamadas en el año.
+- Mirar segmentos poco contactados que aceptan más: jubilados, estudiantes y clientes con estudios superiores.
+
+\vspace{0.3cm}
+
+**Precauciones**
+
+- Son asociaciones descriptivas, no causas.
+- Los datos corresponden a un periodo de crisis (2008-2010).
+- En la etapa de modelamiento: considerar el desbalance y excluir la duración.
+
+## ¡Gracias!
+
+\centering
+\vspace{1cm}
+\Huge ¡Gracias!
+
+\vspace{0.4cm}
+\normalsize ¿Preguntas?

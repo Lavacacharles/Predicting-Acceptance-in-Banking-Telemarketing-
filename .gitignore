@@ -15,7 +15,7 @@ Desktop.ini
 .RData
 .Ruserdata
 .Rproj.user/
-
+_extensions/
 # RStudio temporary files
 *.Rproj.user
 
@@ -36,7 +36,7 @@ Desktop.ini
 # Generated reports
 # =========================
 
-*.pdf
+# *.pdf
 
 # Si quieres versionar algún PDF específico, puedes hacer:
 # !nombre-del-pdf.pdf
@@ -92,3 +92,7 @@ ENV/
 
 .vscode/
 .idea/
+
+info/
+prompts/
+course_slides/
