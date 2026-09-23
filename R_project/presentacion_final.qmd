@@ -1,7 +1,7 @@
 ---
 title: "PROYECTO FINAL"
 subtitle: "Aceptación de depósitos a plazo en campañas de telemarketing bancario"
-author: "Juan Aquino Espinoza, Angel Mora, Leonardo Cueva y Adrian Varillas"
+author: "Juan Aquino Espinoza, Angel Mora, Leonardo Cueva, Douglas Gonzales y Adrian Varillas"
 institute: |
   CIENCIA DE DATOS E INTELIGENCIA ARTIFICIAL \newline
   Introducción a Ciencia de Datos e Inteligencia Artificial \newline
@@ -35,7 +35,7 @@ execute:
 
 ```{r setup, include=FALSE}
 library(reticulate)
-use_virtualenv("r-reticulate", required = TRUE)
+use_virtualenv("./r-reticulate", required = TRUE)
 knitr::opts_chunk$set(out.width = "100%", fig.align = "center")
 ```
 
@@ -136,15 +136,17 @@ def barras_tasa(tasas, titulo, eje, rotacion=0, etiqueta_x=""):
 :::
 
 ::: {.column width="45%"}
-\small
+\scriptsize
 
-| | |
-|---|---|
-| **Fuente** | UCI, *Bank Marketing* (Moro et al., 2014) |
-| **Registros** | 41,188 contactos |
-| **Variables** | 20 de entrada + 1 objetivo |
-| **Periodo** | Mayo 2008 a noviembre 2010 |
-| **Grupos** | Perfil, campaña, indicadores económicos |
+\begin{tabular}{@{}p{0.26\linewidth}p{0.68\linewidth}@{}}
+\toprule
+\textbf{Fuente} & UCI, \textit{Bank Marketing} (Moro et al., 2014) \\
+\textbf{Registros} & 41,188 contactos \\
+\textbf{Variables} & 20 de entrada + 1 objetivo \\
+\textbf{Periodo} & Mayo 2008 a noviembre 2010 \\
+\textbf{Grupos} & Perfil, campaña e indicadores económicos \\
+\bottomrule
+\end{tabular}
 :::
 
 ::::

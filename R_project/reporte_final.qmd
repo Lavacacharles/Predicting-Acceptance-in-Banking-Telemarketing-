@@ -41,7 +41,11 @@ library(corrplot)
 ```{r entorno, include=FALSE}
 # Entorno de Python (igual que en la plantilla) y formato común de las tablas
 library(reticulate)
-use_virtualenv("r-reticulate", required = TRUE)
+dir.create("matplotlib-cache", showWarnings = FALSE)
+dir.create("fontconfig-cache", showWarnings = FALSE)
+Sys.setenv(MPLCONFIGDIR = normalizePath("matplotlib-cache"))
+Sys.setenv(XDG_CACHE_HOME = normalizePath("fontconfig-cache"))
+use_virtualenv("./r-reticulate", required = TRUE)
 
 knitr::opts_chunk$set(out.width = "100%", fig.align = "center")
 options(knitr.kable.NA = "")
@@ -64,9 +68,10 @@ tabla <- function(datos, digitos = 2, ancha = FALSE) {
 ## Integrantes
 
 - Juan Aquino Espinoza
-- Angel Mora
+- Angel Obed Mora Huamanchay
 - Leonardo Cueva
-- Adrian Varillas
+- Adrián Ignacio Varillas Mata
+- Douglas Fabrizio Gonzales Taipe
 
 # CONTEXTO
 
