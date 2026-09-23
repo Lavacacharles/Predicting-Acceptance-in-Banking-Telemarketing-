@@ -1,9 +1,8 @@
 ---
-title: "PROYECTO FINAL"
+title: "PROYECTO PARTE I"
 subtitle: "Aceptación de depósitos a plazo en campañas de telemarketing bancario"
 author: "Juan Aquino Espinoza, Angel Mora, Leonardo Cueva, Douglas Gonzales y Adrian Varillas"
 institute: |
-  CIENCIA DE DATOS E INTELIGENCIA ARTIFICIAL \newline
   Introducción a Ciencia de Datos e Inteligencia Artificial \newline
   Docente: Walter Quispe Vargas
 date: "2026-2"
@@ -35,13 +34,12 @@ execute:
 
 ```{r setup, include=FALSE}
 library(reticulate)
-use_virtualenv("./r-reticulate", required = TRUE)
+use_virtualenv("r-reticulate", required = TRUE)
 knitr::opts_chunk$set(out.width = "100%", fig.align = "center")
 ```
 
 ```{python}
 #| include: false
-# Carga y limpieza (mismas decisiones del reporte), sin mostrar el código
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -151,7 +149,7 @@ def barras_tasa(tasas, titulo, eje, rotacion=0, etiqueta_x=""):
 
 ::::
 
-## El problema en una cifra
+## Problema de negocio
 
 :::: {.columns}
 
@@ -166,7 +164,7 @@ eje.bar_label(eje.containers[0],
 eje.set_title("¿Suscribió un depósito a plazo?")
 eje.set_xlabel("")
 eje.set_ylabel("Número de clientes")
-eje.set_ylim(0, conteo.max() * 1.2)
+_ = eje.set_ylim(0, conteo.max() * 1.2)
 plt.tight_layout()
 plt.show()
 ```
@@ -202,39 +200,112 @@ plt.show()
 
 Resultado: **41,176 filas y 26 columnas**, sin nulos en las variables originales.
 
-## ¿Qué hacer con los valores desconocidos?
+```{python}
+#| include: false
+# Tasa de aceptación del grupo sin dato frente al resto, antes de imputar
+columnas_con_nulos = {"default": "mora", "education": "educacion", "housing": "vivienda",
+                      "loan": "prestamo", "job": "empleo", "marital": "estado_civil"}
+
+crudo = df_original.drop_duplicates().reset_index(drop=True)
+acepto = crudo["y"] == "yes"
+
+filas = []
+for original, nombre in columnas_con_nulos.items():
+    sin_dato = crudo[original] == "unknown"
+    filas.append({
+        "variable": nombre,
+        "pct_nulos": 100 * sin_dato.mean(),
+        "Dato desconocido": 100 * acepto[sin_dato].mean(),
+        "Dato conocido": 100 * acepto[~sin_dato].mean(),
+    })
+comparacion_nulos = (pd.DataFrame(filas)
+                     .sort_values("pct_nulos", ascending=False)
+                     .reset_index(drop=True))
+```
+
+## Valores nulos: ¿dónde faltan datos?
 
 :::: {.columns}
 
 ::: {.column width="50%"}
 ```{python}
+nulos_por_variable = pct_unknown.rename(index=columnas_con_nulos)
+
 fig, eje = plt.subplots(figsize=(6, 4.2))
-sns.barplot(x=pct_unknown.index, y=pct_unknown.values, color=AZUL, ax=eje)
-eje.bar_label(eje.containers[0], fmt="%.2f%%", fontsize=10)
-eje.set_title("Porcentaje de 'unknown' por variable")
-eje.set_xlabel("")
-eje.set_ylabel("% de registros")
+_=sns.barplot(x=nulos_por_variable.index, y=nulos_por_variable.values, color=AZUL, ax=eje)
+_=eje.bar_label(eje.containers[0], fmt="%.2f%%", fontsize=10)
+_=eje.set_title("Porcentaje de 'unknown' por variable")
+_=eje.set_xlabel("")
+_=eje.set_ylabel("% de registros")
+_=eje.set_ylim(0, nulos_por_variable.max() * 1.15)
+_=eje.tick_params(axis="x", rotation=20, labelsize=9)
 plt.tight_layout()
 plt.show()
 ```
 :::
 
 ::: {.column width="50%"}
-**Regla:** comparar la tasa de aceptación del grupo desconocido con la del resto.
+\small
 
-- `mora`: acepta **5.15%** frente a 12.88% $\rightarrow$ nueva categoría `"desconocido"`.
-- `educacion`: **14.51%**, la tasa más alta $\rightarrow$ nueva categoría.
-- `vivienda`, `prestamo`, `empleo`, `estado_civil`: tasa parecida a la general o muy pocos casos $\rightarrow$ **moda**.
+- Los faltantes no son celdas vacías: vienen con la etiqueta `"unknown"`.
+- Aparecen en **6 variables, todas categóricas**; ninguna numérica tiene faltantes.
+- `mora` concentra el **20.87%**: eliminar esas filas costaría una quinta parte de la muestra.
+- `vivienda` y `prestamo` fallan en los **mismos 990 registros**.
+
+\vspace{0.2cm}
+
+**Pregunta:** ¿el grupo sin dato es un segmento de clientes o solo un error de registro?
 :::
 
 ::::
 
-## El valor 999 y las nuevas variables
+## Valores nulos: ¿el grupo sin dato acepta distinto?
+
+:::: {.columns}
+
+::: {.column width="52%"}
+```{python}
+largo = comparacion_nulos.melt(id_vars="variable",
+                               value_vars=["Dato desconocido", "Dato conocido"],
+                               var_name="grupo", value_name="tasa")
+fig, eje = plt.subplots(figsize=(6.4, 4.3))
+_=sns.barplot(data=largo, x="variable", y="tasa", hue="grupo", palette="Set2", ax=eje)
+for i, contenedor in enumerate(eje.containers):
+    # Etiquetas escalonadas para que no se toquen cuando los valores son parecidos
+    _=eje.bar_label(contenedor, fmt="%.1f%%", fontsize=8, padding=12 if i == 0 else 1)
+_=eje.axhline(tasa_general, color="gray", linestyle="--", linewidth=1.2,
+              label=f"Tasa general ({tasa_general:.2f}%)")
+_=eje.set_title("Tasa de aceptación según se conozca el dato")
+_=eje.set_xlabel("")
+_=eje.set_ylabel("Tasa de aceptación (%)")
+_=eje.set_ylim(0, 20)
+_=eje.tick_params(axis="x", rotation=20, labelsize=9)
+_=eje.legend(loc="upper center", ncol=3, fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+:::
+
+::: {.column width="48%"}
+\small
+
+**Desición:** si el grupo sin dato acepta como el resto, imputamos la **moda**; si acepta distinto, lo dejamos como categoría `"desconocido"`.
+
+- `mora`: **5.15%** frente a 12.88%, menos de la mitad $\rightarrow$ categoría propia.
+- `educacion`: **14.51%** frente a 11.12%, la más alta $\rightarrow$ categoría propia.
+- `vivienda`, `prestamo` y `empleo`: la diferencia es menor a medio punto $\rightarrow$ **moda**.
+- `estado_civil`: 15.00%, pero son solo **80 clientes** (0.19% del total) $\rightarrow$ **moda**.
+:::
+
+::::
+
+## Limpieza
 
 :::: {.columns}
 
 ::: {.column width="50%"}
-**`dias_previos` = 999**
+**Dias previos iguales a 999**
+\newline
 
 - El 96.32% de los clientes nunca fue contactado antes.
 - Con el 999, la media es **962.46 días**.
@@ -243,7 +314,8 @@ plt.show()
 :::
 
 ::: {.column width="50%"}
-**Variables nuevas con reglas simples**
+**Variables nuevas para describir la aceptación de depósitos**
+\newline
 
 - `duracion_min`: duración en minutos.
 - `tramo_duracion`: intervalos de minutos.
@@ -255,7 +327,7 @@ plt.show()
 
 # Principales hallazgos
 
-## 1. El historial del cliente es la mejor señal
+## 1. El historial del cliente es clave
 
 ```{python}
 #| out-width: "88%"

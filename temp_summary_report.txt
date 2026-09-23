@@ -1,0 +1,19 @@
+title: "PROYECTO FINAL Parte I: Análisis exploratorio de la aceptación de depósitos a plazo en campañas de telemarketing bancario"
+
+# Análisis exploratorio de la aceptación de depósitos a plazo en campañas de telemarketing bancario.
+
+**Dataset:** Bank Marketing, `bank-additional-full.csv` (UCI Machine Learning Repository).
+
+**Integrantes:**
+
+- Juan Aquino Espinoza
+- Angel Mora
+- Leonardo Cueva
+- Adrian Varillas
+
+Este informe presenta el entendimiento, la preparación y el análisis exploratorio de los datos de las campañas de telemarketing de un banco portugués, en las que se ofrecía a los clientes un depósito a plazo. Nuestro principal hallazgo corresponde a que la mayor parte del esfuerzo de la campaña se invierte en clientes que no aceptan el producto.
+
+
+El análisis exploratorio muestra que la aceptación es mucho mayor en los clientes con historial de contacto (63.83% frente a 9.26%), en los periodos con Euribor baja (24.46% frente a 4.84%), en clientes jóvenes y mayores de 65 años, en estudiantes y jubilados, y en contactos por celular. También muestra que insistir sobre un mismo cliente se asocia con una menor aceptación y que tres indicadores macroeconómicos (`tasa_var_empleo`, `euribor3m` y `num_empleados`) están fuertemente correlacionados entre sí. 
+
+#| fig-pos: "htbp"

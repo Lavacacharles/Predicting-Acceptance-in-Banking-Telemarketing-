@@ -45,7 +45,7 @@ dir.create("matplotlib-cache", showWarnings = FALSE)
 dir.create("fontconfig-cache", showWarnings = FALSE)
 Sys.setenv(MPLCONFIGDIR = normalizePath("matplotlib-cache"))
 Sys.setenv(XDG_CACHE_HOME = normalizePath("fontconfig-cache"))
-use_virtualenv("./r-reticulate", required = TRUE)
+use_virtualenv("r-reticulate", required = TRUE)
 
 knitr::opts_chunk$set(out.width = "100%", fig.align = "center")
 options(knitr.kable.NA = "")
@@ -67,9 +67,9 @@ tabla <- function(datos, digitos = 2, ancha = FALSE) {
 
 ## Integrantes
 
-- Juan Aquino Espinoza
+- Juan Leibniz Aquino Espinoza
 - Angel Obed Mora Huamanchay
-- Leonardo Cueva
+- Leonardo Gabriel Cueva Caipo
 - Adrián Ignacio Varillas Mata
 - Douglas Fabrizio Gonzales Taipe
 
