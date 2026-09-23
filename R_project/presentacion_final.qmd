@@ -1,7 +1,7 @@
 ---
 title: "PROYECTO PARTE I"
 subtitle: "Aceptación de depósitos a plazo en campañas de telemarketing bancario"
-author: "Juan Aquino Espinoza, Angel Mora, Leonardo Cueva, Douglas Gonzales y Adrian Varillas"
+author: "Juan Aquino, Angel Mora, Leonardo Cueva, Douglas Gonzales y Adrian Varillas"
 institute: |
   Introducción a Ciencia de Datos e Inteligencia Artificial \newline
   Docente: Walter Quispe Vargas
