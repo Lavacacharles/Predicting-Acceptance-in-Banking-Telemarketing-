@@ -89,6 +89,8 @@ El dataset proviene del **UCI Machine Learning Repository** (*Bank Marketing*) [
 
 Notamos que el estudio original y la versión pública del dataset no coinciden, por ello primero dejamos evidencia de las diferencias; **la consideración principal para este análisis es que rige la versión pública**.
 
+\newpage
+
 | Metadatos | Original (Moro et al., 2014) | Dataset público |
 |---|---|---|
 | Registros | 52,944 contactos | 41,188 registros |
@@ -106,6 +108,8 @@ El universo de trabajo son las 41,188 filas y 21 columnas del archivo público. 
 2. Identificar qué variables muestran diferencias en la tasa de aceptación entre grupos.
 3. Detectar relaciones lineales y colinealidad entre las variables numéricas.
 4. Señalar las variables clave que aportan valor para predecir la aceptación de depósitos a plazo.
+
+\newpage 
 
 ## Variables
 
@@ -302,6 +306,8 @@ tabla_unknown = nulos_unknown.reset_index(names="variable")
 tabla(py$tabla_unknown)
 ```
 
+\newpage
+
 ```{python, echo=FALSE} 
 #| label: fig-unknown
 #| fig-cap: "Porcentaje de valores desconocidos ('unknown') por variable."
@@ -314,6 +320,7 @@ plt.xlabel("Variable")
 plt.ylabel("Porcentaje de registros (%)")
 mostrar_figura()
 ```
+
 
 **Observaciones de valores desconocidos**
 
@@ -481,6 +488,72 @@ print(f"Los nulos de vivienda y préstamo son las mismas filas: {mismas_filas}")
 tabla(py$validacion_unknown)
 ```
 
+```{python}
+#| echo: false
+#| label: fig-tasa-nulos
+#| fig-cap: "Tasa de aceptación según se conozca el dato."
+#| fig-pos: "H"
+
+def graficar_tasa_nulos(datos, columnas):
+    """
+    Calcula y grafica la tasa de aceptación comparando registros 
+    con dato 'unknown' vs dato conocido para las columnas especificadas.
+    """
+    # 1. Calcular la tasa general de aceptación
+    tasa_general = 100 * (datos["suscribio"] == "yes").mean()
+    acepto = datos["suscribio"] == "yes"
+    
+    # 2. Preparar los datos
+    filas = []
+    for col in columnas:
+        es_nulo = datos[col] == "unknown"
+        
+        tasa_desc = 100 * acepto[es_nulo].mean() if es_nulo.sum() > 0 else 0
+        tasa_con = 100 * acepto[~es_nulo].mean() if (~es_nulo).sum() > 0 else 0
+            
+        filas.append({
+            "variable": col,
+            "pct_nulos": 100 * es_nulo.mean(),
+            "Dato desconocido": tasa_desc,
+            "Dato conocido": tasa_con
+        })
+        
+    # Ordenar por porcentaje de nulos y transformar a formato largo para Seaborn
+    resumen = pd.DataFrame(filas).sort_values("pct_nulos", ascending=False)
+    largo = resumen.melt(id_vars="variable",
+                         value_vars=["Dato desconocido", "Dato conocido"],
+                         var_name="grupo", value_name="tasa")
+    
+    # 3. Crear el gráfico
+    fig, eje = plt.subplots(figsize=(6.4, 4.3))
+    _ = sns.barplot(data=largo, x="variable", y="tasa", hue="grupo", palette="Set2", ax=eje)
+    
+    # Etiquetas escalonadas
+    for i, contenedor in enumerate(eje.containers):
+        _ = eje.bar_label(contenedor, fmt="%.1f%%", fontsize=8, padding=12 if i == 0 else 1)
+        
+    # Línea de la tasa general
+    _ = eje.axhline(tasa_general, color="gray", linestyle="--", linewidth=1.2,
+                    label=f"Tasa general ({tasa_general:.2f}%)")
+    
+    # Formato final
+    _ = eje.set_title("Tasa de aceptación según se conozca el dato")
+    _ = eje.set_xlabel("")
+    _ = eje.set_ylabel("Tasa de aceptación (%)")
+    _ = eje.set_ylim(0, 20)
+    _ = eje.tick_params(axis="x", rotation=20, labelsize=9)
+    _ = eje.legend(loc="upper center", ncol=3, fontsize=8)
+    
+    # Usar la función auxiliar del reporte para mostrar
+    mostrar_figura()
+
+# Llamar a la función usando la lista de variables con 'unknown' de tu reporte
+graficar_tasa_nulos(df, columnas_unknown)
+
+```
+
+\newpage
+
 ```{r}
 #| label: tbl-detalle-nulos
 #| tbl-cap: "Tasa de aceptación por categoría en las variables con valores desconocidos."
@@ -496,6 +569,8 @@ Evaluamos la tasa de aceptación de depósitos entre el grupo de nulos y el rest
 - En **`vivienda` y `prestamo`** los desconocidos (10.81%) están prácticamente en el mismo rango de las categorías conocidas (10.88% a 11.62%) y de la tasa general. Además, son **los mismos 990 registros** en ambas variables, lo que sugiere una falla puntual de registro y no un segmento de clientes; por ello imputamos con la moda.
 - En **`empleo`** la tasa de aceptación del grupo con nulos es 11.21%, casi idéntica a la general (difiere solo en -0.05 puntos) y afecta al 0.80% de los registros, por lo que es apropiado imputar con la moda.
 - En **`estado_civil`** la tasa de los desconocidos (15.00%) es relativamente alta, pero se calcula sobre solo **80 clientes** (0.19%). Con tan pocos casos, una diferencia de 12 suscripciones cambia la tasa en varios puntos, por lo que no se considera evidencia de un segmento propio y se imputa con la moda.
+
+\newpage
 
 ## Tratamiento de los valores nulos
 
@@ -548,9 +623,12 @@ print(f"Media de dias_previos con el valor 999:  {df['dias_previos'].mean():.2f}
 print(f"Media de dias_desde_contacto sin el 999: {df['dias_desde_contacto'].mean():.2f}")
 ```
 
+\newpage
+
 ## Transformación de tipos de dato
 
 Las variables categóricas se convierten al tipo `category`. En las variables ordinales (`educacion`, `mes`, `dia_semana`) se define el orden natural de sus niveles, lo que permite que tablas y gráficos respeten ese orden. La variable objetivo se recodifica como `"Sí"` / `"No"` para facilitar la lectura.
+
 
 ```{python}
 #| echo: false
@@ -570,6 +648,8 @@ for col in ["empleo", "estado_civil", "mora", "vivienda", "prestamo",
 
 print(df.dtypes)
 ```
+
+\newpage
 
 ## Enriquecimiento de los datos: creación de nuevas variables
 
@@ -622,11 +702,15 @@ frecuencias_nuevas = pd.concat([
 ])[["variable", "categoria", "frecuencia", "porcentaje"]]
 ```
 
+\newpage
+
 ```{r}
 #| label: tbl-frec-nuevas
 #| tbl-cap: "Tablas de frecuencia de las nuevas variables."
 tabla(py$frecuencias_nuevas)
 ```
+
+\newpage
 
 ```{python}
 #| echo: false
@@ -693,6 +777,8 @@ atipicos = resumen[["lim_inf_iqr", "lim_sup_iqr", "n_atipicos",
 tabla(py$tendencia_central)
 ```
 
+\newpage
+
 ```{r}
 #| label: tbl-dispersion
 #| tbl-cap: "Medidas de dispersión de las variables numéricas."
@@ -705,11 +791,15 @@ tabla(py$dispersion, ancha = TRUE)
 tabla(py$atipicos)
 ```
 
+\newpage
+
 **Observaciones de la tendencia central y la dispersión**
+
+\footnotesize
 
 | Variable | Hallazgos |
 |---|-------------|
-| `edad` | Media de 40.02 años, mediana de 38 y moda de 31: la media supera a la mediana por la presencia de clientes mayores. La desviación estándar es de 10.42 años y el 50% central está entre 32 y 47 años (IQR = 15). Hay 468 atípicos (1.14%), todos por encima de 69.5 años. |
+| `edad` | Media de 40 años, mediana de 38 y moda de 31: la media supera a la mediana por la presencia de clientes mayores y la desviación estándar es de 10.42 años, y el 50% central está entre 32 y 47 años (IQR = 15). Hay 468 atípicos (1.14%), todos por encima de 69.5 años. |
 | `duracion en minutos` | La media de 4.31 minutos supera a la mediana de 3.00: la mayoría de llamadas es corta, pero hay llamadas muy largas. El rango (81.97 min) es enorme frente al IQR (3.62 min). El 7.20% de las llamadas (2,963) supera los 10.74 minutos y se considera atípica. |
 | `campana` | La moda es 1 contacto y la mediana, 2. La media (2.57) se eleva por un grupo reducido de clientes contactados de forma reiterada, hasta 56 veces. El 5.84% (2,406 clientes) recibió más de 6 contactos; este sería el segmento de **insistencia excesiva**. |
 | `dias desde contacto` | Para los 1,515 clientes con historial, la media (6.01) y la mediana (6) casi coinciden, con un IQR de 3 a 7 días. Los contactos previos suelen ser recientes, alrededor de una semana antes. El 5.41% supera los 13 días. |
@@ -717,12 +807,16 @@ tabla(py$atipicos)
 | `tasa var empleo` | Varía en un rango de -3.4 a 1.4, sin atípicos. La mediana (1.10) es muy superior a la media (0.08): indica la existencia de periodos de crecimiento y de decrecimiento del empleo. |
 | `ipc` | Tiene muy poca dispersión (desviación estándar de 0.58 sobre una media de 93.58; rango de 2.57 puntos). Es la variable más estable del grupo. |
 | `icc` | Media de -40.50 y mediana de -41.80: la confianza del consumidor fue negativa en todo el periodo, reflejo del contexto de crisis. Hay 446 atípicos (1.08%) en el extremo menos pesimista (-26.9). |
-| `euribor3m` | La mediana (4.86%) está muy por encima de la media (3.62%) y la desviación estándar es alta (1.73) para una tasa de interés. Esto evidencia dos contextos distintos: tasas previas a la crisis cercanas a 5% y tasas posteriores cercanas a 1%. |
+| `euribor3m` | La mediana (4.86%) está muy por encima de la media (3.62%) y la desviación estándar es alta (1.73) para una tasa de interés, esto evidencia dos contextos distintos: tasas previas a la crisis cercanas a 5% y tasas posteriores cercanas a 1%. |
 | `num empleados` | Media de 5,167 y mediana de 5,191, con un IQR de 129. No presenta atípicos, pero su distribución está concentrada en un rango pequeño de valores. |
 
 : Interpretación de las medidas de tendencia central y de dispersión. {#tbl-interpretacion-medidas}
 
-En síntesis, las variables que describen las llamadas (`duracion_min`, `campana`, `contactos_previos`) presentan la mayor dispersión respecto al resto y concentran los valores extremos. Las variables macroeconómicas no tienen atípicos, pero la gran diferencia entre su media y su mediana indica que sus distribuciones están cargadas hacia un lado.
+\normalsize
+
+**En síntesis**, las variables que describen las llamadas (`duracion_min`, `campana`, `contactos_previos`) presentan la mayor dispersión respecto al resto y concentran los valores extremos. Las variables macroeconómicas no tienen atípicos, pero la gran diferencia entre su media y su mediana indica que sus distribuciones están cargadas hacia un lado.
+
+\newpage
 
 ### Boxplots de las variables numéricas
 
@@ -786,6 +880,8 @@ forma = pd.DataFrame({
 }).reset_index()
 ```
 
+\newpage
+
 ```{r}
 #| label: tbl-forma
 #| tbl-cap: "Comparación entre media y mediana, y número de valores distintos por variable."
@@ -808,6 +904,8 @@ frecuencia_campana = (tabla_frecuencias(df["campana"]).sort_index().head(10)
 #| tbl-cap: "Tabla de frecuencias de la edad por clases de 10 años."
 tabla(py$frecuencia_edad)
 ```
+
+\newpage
 
 ```{r}
 #| label: tbl-frec-campana
@@ -864,13 +962,28 @@ def frecuencias_categoricas(datos, columnas):
 grafico_barras_categoricas(df, variables_categoricas_perfil,
                            "Variables categóricas del perfil del cliente", filas=2, cols=4)
 frecuencias_perfil = frecuencias_categoricas(df, variables_categoricas_perfil)
+frecuencias_perfil['porcentaje'] = frecuencias_perfil['porcentaje'].apply(lambda x: f'{x:.2f}%')
 ```
+
+\newpage
+
+
+\footnotesize
 
 ```{r}
 #| label: tbl-frec-perfil
 #| tbl-cap: "Tablas de frecuencia de las variables categóricas del perfil del cliente."
-tabla(py$frecuencias_perfil)
+
+library(knitr)
+library(kableExtra)
+
+kable(py$frecuencias_perfil, format = "latex", booktabs = TRUE) |> 
+  kable_styling(font_size = 8)
+
+#tabla(py$frecuencias_perfil)
 ```
+
+\normalsize
 
 **Observaciones de los gráficos de barras sobre el perfil de los clientes**
 
@@ -893,6 +1006,8 @@ grafico_barras_categoricas(df, variables_categoricas_campana,
                            filas=2, cols=3)
 frecuencias_campana = frecuencias_categoricas(df, variables_categoricas_campana)
 ```
+
+\newpage
 
 ```{r}
 #| label: tbl-frec-campana-cat
@@ -924,20 +1039,29 @@ variables_relacion = ["edad", "duracion_min", "campana", "contactos_previos",
 matriz_covarianza = df[variables_relacion].cov()
 tabla_covarianza = matriz_covarianza.reset_index(names="variable")
 tabla_covarianza_f6 = tabla_covarianza.iloc[:,:6]
-tabla_covarianza_f12 = tabla_covarianza.iloc[:,6:12]
-tabla_covarianza_rest = tabla_covarianza.iloc[:,12:]
+tabla_covarianza_f12 = pd.concat([tabla_covarianza['variable'], tabla_covarianza.iloc[:,6:12]], axis=1)
 ```
 
 ```{r}
 #| label: tbl-covarianza1
 #| tbl-cap: "Matriz de covarianza (Primeras 6 numéricas)"
-tabla(py$tabla_covarianza_f6, ancha = TRUE)
+#| tbl-pos: "H"
+#tabla(py$tabla_covarianza_f6, ancha = TRUE)
+
+kable(py$tabla_covarianza_f6, format = "latex", booktabs = TRUE) |> 
+  kable_styling(font_size = 9, latex_options = "hold_position")
 ```
+
 
 ```{r}
 #| label: tbl-covarianza2
 #| tbl-cap: "Matriz de covarianza (Últimas 3 numéricas)."
-tabla(py$tabla_covarianza_f12, ancha = TRUE)
+#| tbl-pos: "H"
+#tabla(py$tabla_covarianza_f12, ancha = TRUE)
+
+kable(py$tabla_covarianza_f12, format = "latex", booktabs = TRUE) |> 
+  kable_styling(font_size = 9, latex_options = "hold_position")
+
 ```
 
 
@@ -950,6 +1074,8 @@ tabla(py$tabla_covarianza_f12, ancha = TRUE)
   - `duracion_min` y `campana` covarían negativamente (-0.86): los clientes que recibieron más contactos tienden a tener llamadas más cortas.
 
 **Nota:** la covarianza tiene una limitación: su magnitud depende de las unidades de cada variable. El valor 118.44 no implica una relación más fuerte que 2.65; solo refleja que `num_empleados` se mide en miles. Por eso la intensidad de la relación se evalúa con la correlación de Pearson, que elimina el efecto de la escala.
+
+\newpage
 
 ### Correlación de Pearson y mapa de calor
 
@@ -987,6 +1113,8 @@ pares_colineales = pares[pares["r_absoluto"] >= 0.8]
 tabla(py$pares_top, digitos = 3)
 ```
 
+\newpage
+
 ```{r}
 #| label: tbl-colinealidad
 #| tbl-cap: "Pares con correlación absoluta mayor o igual a 0.8 (posible colinealidad)."
@@ -1003,6 +1131,8 @@ tabla(py$pares_colineales, digitos = 3)
   Estas tres variables se mueven prácticamente juntas: describen el mismo ciclo económico, de expansión antes de la crisis y de contracción después. Contienen información redundante y, en una etapa posterior, convendría no utilizarlas todas a la vez.
 - **Relaciones moderadas:** `ipc` se asocia con `tasa_var_empleo` (r = 0.78) y con `euribor3m` (r = 0.69). `contactos_previos` tiene una correlación negativa moderada con `num_empleados` (r = -0.50), `euribor3m` (-0.46) y `tasa_var_empleo` (-0.42), coherente con lo observado en la covarianza.
 - **Relaciones débiles o nulas:** `icc` apenas se relaciona con `euribor3m` (r = 0.28); la confianza del consumidor aporta información distinta a la del resto de indicadores. `edad`, `duracion_min` y `campana` tienen correlaciones cercanas a 0 con casi todas las demás variables.
+
+\newpage
 
 ### Boxplots comparativos según la suscripción
 
@@ -1041,6 +1171,8 @@ medidas_por_grupo = pd.DataFrame(filas)
 tabla(py$medidas_por_grupo)
 ```
 
+\newpage
+
 **Análisis de los boxplots comparativos**
 
 - **`duracion_min`**: es la diferencia más marcada. Quienes se suscribieron tienen una mediana de **7.48 minutos** frente a **2.73** de quienes no lo hicieron, y el primer cuartil de los que suscriben (4.22 min) casi coincide con el tercer cuartil de los que no (4.65 min). Las conversaciones que terminan en venta son mucho más largas. Esta relación **no puede usarse para priorizar clientes antes de llamar**, porque la duración solo se conoce después de la llamada, pero sí orienta la gestión: mantener la conversación es una condición para concretar la venta.
@@ -1049,6 +1181,8 @@ tabla(py$medidas_por_grupo)
 - **`campana`**: la mediana es 2 contactos en ambos grupos, pero el tercer cuartil baja de 3 (no suscriben) a 2 (suscriben) y la media de 2.63 a 2.05. De ello deducimos que más insistencia no se traduce en más ventas.
 - **`edad`**: medianas similares (37 y 38 años), pero la caja de quienes suscriben es más amplia, con un tercer cuartil de 50 años frente a 47; por ende, los clientes mayores tienen más presencia entre quienes aceptan.
 - **`icc`**: diferencias pequeñas en la mediana (-40.4 frente a -41.8), aunque los que suscriben tienen un primer cuartil más bajo (-46.2); parte de las suscripciones ocurre en meses de confianza muy baja.
+
+\newpage
 
 ### Mes de contacto y confianza del consumidor
 
@@ -1142,6 +1276,8 @@ tabla(py$aceptacion_euribor)
 
 **Implicancia:** el contexto de tasas de interés bajas coincide con una propensión al ahorro mucho mayor. Para planificar campañas, el entorno económico es una variable tan importante como el perfil del cliente, recordando que esta tendencia proviene de un periodo histórico concreto (2008-2010).
 
+\newpage
+
 ### Gráficos de barras agrupadas y tablas cruzadas
 
 Las barras agrupadas muestran la frecuencia de cada categoría separada por la variable objetivo. Como el grupo "No" domina en todas las categorías, cada gráfico se acompaña de una tabla cruzada con la **tasa de aceptación** (frecuencia relativa por fila), que es la medida comparable entre categorías.
@@ -1184,6 +1320,8 @@ barras_agrupadas(df, columnas_campana, "Variables de la campaña según la suscr
 tasas_campana = tasas_por_variable(df, columnas_campana)
 ```
 
+\newpage
+
 ```{r}
 #| label: tbl-tasas-campana
 #| tbl-cap: "Tasa de aceptación por categoría de las variables de la campaña."
@@ -1209,11 +1347,15 @@ barras_agrupadas(df, columnas_perfil, "Variables del perfil del cliente según l
 tasas_perfil = tasas_por_variable(df, columnas_perfil)
 ```
 
+\newpage
+
 ```{r}
 #| label: tbl-tasas-perfil
 #| tbl-cap: "Tasa de aceptación por categoría de las variables del perfil del cliente."
 tabla(py$tasas_perfil)
 ```
+
+\newpage
 
 **Análisis de las barras agrupadas del perfil de los clientes**
 
