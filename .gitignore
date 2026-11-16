@@ -31,6 +31,9 @@ _extensions/
 *.html
 *.html.json
 
+# Excepción: la presentación final de P2 es un entregable en HTML
+!R_project/presentacion_final_p2.html
+
 
 # =========================
 # Generated reports

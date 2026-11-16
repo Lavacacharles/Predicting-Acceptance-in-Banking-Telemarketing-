@@ -1,5 +1,5 @@
 ---
-title: "Análisis de la aceptación de depósitos a plazo en campañas de telemarketing bancario"
+title: "Análisis y predicción de la aceptación de depósitos a plazo en campañas de telemarketing bancario"
 department: CIENCIA DE DATOS E \newline  INTELIGENCIA ARTIFICIAL
 organization: Introducción a Ciencia de Datos e Inteligencia Artificial
 number-sections: true
@@ -108,6 +108,8 @@ El universo de trabajo son las 41,188 filas y 21 columnas del archivo público. 
 2. Identificar qué variables muestran diferencias en la tasa de aceptación entre grupos.
 3. Detectar relaciones lineales y colinealidad entre las variables numéricas.
 4. Señalar las variables clave que aportan valor para predecir la aceptación de depósitos a plazo.
+5. Construir y comparar modelos de clasificación supervisada que estimen, antes de la llamada, la probabilidad de que un cliente suscriba el depósito.
+6. Explicar cómo decide el mejor modelo y analizar críticamente sus errores (autopsia del modelo).
 
 \newpage 
 
@@ -1463,7 +1465,7 @@ Esto no es concluyente: como toda relación exploratoria, muestra una asociació
 
 \newpage
 
-# CONCLUSIONES
+# CONCLUSIONES DEL EDA
 
 ## Hallazgos a nivel univariado
 
@@ -1504,5 +1506,1240 @@ Esto no es concluyente: como toda relación exploratoria, muestra una asociació
 - Todas las relaciones identificadas son **asociaciones descriptivas**: no asumimos que la correlación implique causalidad, y varias diferencias (por ejemplo, entre meses) pueden deberse a cómo se seleccionó a los clientes en cada periodo.
 - Los datos provienen de un periodo específico (2008-2010) que corresponde a una crisis financiera europea, por lo que los patrones vinculados al contexto económico deben validarse antes de aplicarse a otros periodos.
 - A partir de los hallazgos más importantes del EDA, sugerimos tres acciones: **priorizar a los clientes con historial de contacto**, **limitar la insistencia** a pocos contactos por cliente y **planificar las campañas considerando el contexto de tasas de interés**. La siguiente etapa de modelamiento deberá considerar el desbalance de clases y excluir la variable `duracion`.
+
+\newpage
+
+# PREPARACIÓN FINAL DEL DATASET
+
+A partir de esta sección comienza la **segunda parte del proyecto**: construir un modelo de aprendizaje supervisado que, **antes de realizar la llamada**, estime la probabilidad de que un cliente suscriba el depósito a plazo. El objetivo de negocio es que la campaña concentre sus llamadas en los clientes con mayor propensión, en lugar de contactar de forma masiva a toda la base.
+
+Se parte del dataset preprocesado en la primera parte (41,176 registros, sin duplicados y con los valores desconocidos ya tratados). La variable objetivo se codifica como **1 = suscribió** y **0 = no suscribió**.
+
+```{python}
+#| echo: false
+# ---------------------------------------------------------------
+# PARTE II: librerías de modelamiento y utilidades
+# ---------------------------------------------------------------
+import os
+import time
+from sklearn.model_selection import (train_test_split, StratifiedKFold,
+                                     GridSearchCV, RandomizedSearchCV)
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.base import clone
+from sklearn.dummy import DummyClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score,
+                             roc_auc_score, average_precision_score, confusion_matrix,
+                             roc_curve, precision_recall_curve)
+from xgboost import XGBClassifier, DMatrix
+
+SEMILLA = 42                      # semilla única para que todo sea reproducible
+CARPETA_FIGURAS = "figuras_p2"    # las figuras se guardan también para la presentación
+os.makedirs(CARPETA_FIGURAS, exist_ok=True)
+
+
+def guardar_figura(nombre):
+    """Guarda la figura actual en PNG (la usa la presentación) y la muestra en el reporte."""
+    plt.tight_layout()
+    plt.savefig(f"{CARPETA_FIGURAS}/{nombre}.png", dpi=150, bbox_inches="tight")
+    plt.show()
+
+
+# Variable objetivo en formato binario: 1 = suscribió, 0 = no suscribió
+y_binaria = (df["suscribio"] == "Sí").astype(int)
+```
+
+## Medición de la fuerza predictora de las variables
+
+Para medir cuánto ayuda cada variable a separar a quienes suscriben de quienes no, usamos el **Information Value (IV)**, la medida estándar de selección de variables en *scoring* bancario (Siddiqi, 2006, *Credit Risk Scorecards*). Para cada categoría (o decil, en las numéricas) se calcula el *Weight of Evidence*:
+
+$$WoE_i = \ln\left(\frac{\%\,\text{suscriben}_i}{\%\,\text{no suscriben}_i}\right), \qquad IV = \sum_i \left(\%\,\text{suscriben}_i - \%\,\text{no suscriben}_i\right) \cdot WoE_i$$
+
+**¿Por qué el IV y no la correlación de Pearson?** Porque (1) mide en la misma escala variables numéricas y categóricas, (2) captura relaciones **no lineales**, como la forma de "U" de la aceptación por edad que vimos en el EDA, y (3) tiene umbrales de interpretación conocidos en banca: menos de 0.02, sin poder predictivo; 0.02 a 0.1, débil; 0.1 a 0.3, medio; 0.3 a 0.5, fuerte; y más de 0.5, *sospechosamente* fuerte (conviene revisar si hay fuga de información).
+
+```{python}
+#| echo: false
+def valor_informacion(x, y, bins=10):
+    """
+    Information Value (IV) de una variable frente a la objetivo binaria y.
+    - Las numéricas con muchos valores se agrupan en deciles.
+    - Si los deciles colapsan (p. ej. dias_previos, casi todo 999), se usan sus valores tal cual.
+    - Se suma 0.5 a cada celda para evitar log(0) en categorías sin positivos o sin negativos.
+    """
+    x = pd.Series(x)
+    if pd.api.types.is_numeric_dtype(x) and x.nunique() > 20:
+        agrupada = pd.qcut(x, bins, duplicates="drop")
+        if agrupada.nunique() > 1:
+            x = agrupada
+    conteo = pd.crosstab(x.astype(str), y)
+    pct_pos = (conteo[1] + 0.5) / conteo[1].sum()   # % de los que suscriben en cada grupo
+    pct_neg = (conteo[0] + 0.5) / conteo[0].sum()   # % de los que no suscriben en cada grupo
+    woe = np.log(pct_pos / pct_neg)                  # Weight of Evidence
+    return float(((pct_pos - pct_neg) * woe).sum())
+
+
+def poder_predictivo(iv):
+    """Escala de interpretación habitual del IV en scoring bancario (Siddiqi, 2006)."""
+    if iv < 0.02:
+        return "Sin poder predictivo"
+    if iv < 0.1:
+        return "Débil"
+    if iv < 0.3:
+        return "Medio"
+    if iv < 0.5:
+        return "Fuerte"
+    return "Muy fuerte (revisar)"
+
+
+variables_candidatas = ["edad", "grupo_etario", "empleo", "estado_civil", "educacion", "mora",
+                        "vivienda", "prestamo", "tipo_contacto", "mes", "dia_semana",
+                        "duracion", "campana", "dias_previos", "contactos_previos",
+                        "resultado_previo", "contacto_previo", "tasa_var_empleo", "ipc",
+                        "icc", "euribor3m", "num_empleados"]
+
+tabla_iv = (pd.DataFrame({"variable": variables_candidatas,
+                          "IV": [valor_informacion(df[c], y_binaria)
+                                 for c in variables_candidatas]})
+            .sort_values("IV", ascending=False).reset_index(drop=True))
+tabla_iv["poder_predictivo"] = tabla_iv["IV"].apply(poder_predictivo)
+```
+
+## Selección de *features*: eliminación de variables irrelevantes
+
+Combinamos el IV con tres reglas de exclusión, aplicadas en este orden:
+
+1. **Fuga de información (*data leakage*):** se descarta toda variable que no se conoce en el momento de decidir a quién llamar.
+2. **Redundancia y colinealidad:** cuando dos variables cuentan la misma historia (r > 0.9 en el EDA) o una es derivada de otra, se conserva solo una.
+3. **Sin poder predictivo:** se descartan las variables con IV < 0.02.
+
+```{python}
+#| echo: false
+# Reglas de exclusión: (1) fuga de información, (2) redundancia/colinealidad, (3) IV < 0.02
+motivos_exclusion = {
+    "duracion": "Fuga de información: solo se conoce al terminar la llamada",
+    "tasa_var_empleo": "Colineal con euribor3m (r = 0.97)",
+    "num_empleados": "Colineal con euribor3m (r = 0.94)",
+    "dias_previos": "Código 999; su información ya está en contacto_previo",
+    "grupo_etario": "Derivada de edad (se conserva la variable original)",
+}
+for _, fila in tabla_iv.iterrows():
+    if fila["IV"] < 0.02 and fila["variable"] not in motivos_exclusion:
+        motivos_exclusion[fila["variable"]] = "IV < 0.02: sin poder predictivo"
+
+tabla_iv["decision"] = np.where(tabla_iv["variable"].isin(motivos_exclusion),
+                                "Se descarta", "Se conserva")
+tabla_iv["motivo"] = tabla_iv["variable"].map(motivos_exclusion).fillna("")
+
+# Variables finales del modelo, separadas por tipo para el preprocesamiento
+variables_numericas_modelo = ["edad", "campana", "contactos_previos", "ipc", "icc", "euribor3m"]
+variables_categoricas_modelo = ["empleo", "estado_civil", "educacion", "mora", "tipo_contacto",
+                                "mes", "resultado_previo", "contacto_previo"]
+variables_modelo = variables_numericas_modelo + variables_categoricas_modelo
+
+# Comprobación: las conservadas son exactamente las que no tienen motivo de exclusión
+assert set(variables_modelo) == set(tabla_iv.loc[tabla_iv["decision"] == "Se conserva", "variable"])
+print(f"Variables candidatas: {len(variables_candidatas)} | "
+      f"descartadas: {len(motivos_exclusion)} | conservadas: {len(variables_modelo)}")
+```
+
+```{r}
+#| label: tbl-iv
+#| tbl-cap: "Information Value de las variables candidatas y decisión de selección."
+py$tabla_iv |>
+  kable(booktabs = TRUE, linesep = "", digits = 3,
+        col.names = c("Variable", "IV", "Poder predictivo", "Decisión", "Motivo de exclusión")) |>
+  kable_styling(latex_options = c("HOLD_position", "striped"), font_size = 9) |>
+  row_spec(0, bold = TRUE) |>
+  column_spec(5, width = "6.2cm")
+```
+
+```{python}
+#| echo: false
+#| label: fig-iv
+#| fig-cap: "Information Value de las variables candidatas y decisión de selección (líneas punteadas: umbrales 0.02, 0.1, 0.3 y 0.5)."
+#| out-width: "80%"
+colores = tabla_iv["decision"].map({"Se conserva": "steelblue", "Se descarta": "lightgray"})
+_ = plt.figure(figsize=(9, 7))
+_ = plt.barh(tabla_iv["variable"], tabla_iv["IV"], color=colores)
+_ = plt.gca().invert_yaxis()
+for umbral in [0.02, 0.1, 0.3, 0.5]:
+    _ = plt.axvline(umbral, color="gray", linestyle="--", linewidth=0.8)
+_ = plt.legend(handles=[plt.Rectangle((0, 0), 1, 1, color="steelblue"),
+                    plt.Rectangle((0, 0), 1, 1, color="lightgray")],
+           labels=["Se conserva", "Se descarta"], loc="lower right")
+_ = plt.title("Fuerza predictora de cada variable (Information Value)")
+_ = plt.xlabel("Information Value (IV)")
+_ = plt.ylabel("")
+guardar_figura("01_information_value")
+```
+
+**Interpretación de la fuerza predictora y de la selección (@tbl-iv y @fig-iv)**
+
+- **`duracion` tiene el IV más alto (1.91), pero se descarta.** Es el caso clásico de fuga de información: la duración solo se conoce cuando la llamada terminó, y una llamada larga *es* en buena medida la venta. Un modelo que la use tendría métricas excelentes en el papel y sería inútil en la práctica, porque no puede decidir a quién llamar con un dato que aún no existe. La propia documentación del dataset recomienda excluirla para un modelo realista.
+- **Indicadores macroeconómicos.** `num_empleados` (1.20), `tasa_var_empleo` (1.07) y `euribor3m` (1.04) tienen IV muy altos, pero en el EDA vimos que tienen correlaciones entre 0.91 y 0.97: miden el mismo ciclo económico. Se conserva solo **`euribor3m`**, que es la más interpretable (es la tasa de interés que compite directamente con el depósito) y la que tiene más valores distintos (316 frente a 10 u 11). `ipc` e `icc` se conservan porque su relación con la Euribor es moderada o débil.
+- **Atención a los IV mayores de 0.5.** `euribor3m`, `icc`, `contacto_previo` y `resultado_previo` superan el umbral de "revisar". En los dos últimos no hay fuga: el historial de campañas anteriores sí se conoce antes de llamar. En los indicadores macro el IV alto se explica porque **identifican el periodo** del contacto (EDA, sección de histogramas); este punto se retoma en la autopsia, porque resulta ser la principal debilidad del modelo.
+- **`dias_previos` y `grupo_etario` son redundantes:** el 96.32% de `dias_previos` es el código 999, así que su información está en `contacto_previo` (IV casi idéntico: 0.57 frente a 0.55), y `grupo_etario` es un resumen de `edad`. Se conserva `edad` en su forma original para no perder detalle; los modelos de árboles pueden encontrar por sí solos los cortes de edad.
+- **`dia_semana`, `vivienda` y `prestamo` no tienen poder predictivo (IV < 0.02)**, lo que confirma lo observado en el EDA: su tasa de aceptación casi no cambia entre categorías.
+- `estado_civil` (0.028), `educacion` (0.049) y `campana` (0.054) son débiles pero superan el umbral, por lo que se conservan: el modelo decidirá cuánto peso darles.
+
+Quedan **14 variables**: 6 numéricas (`edad`, `campana`, `contactos_previos`, `ipc`, `icc`, `euribor3m`) y 8 categóricas (`empleo`, `estado_civil`, `educacion`, `mora`, `tipo_contacto`, `mes`, `resultado_previo`, `contacto_previo`).
+
+### Verificación de la colinealidad tras la selección
+
+Para confirmar que la selección resolvió la colinealidad detectada en el EDA, calculamos el **factor de inflación de la varianza** (VIF) de las variables numéricas antes y después. El VIF mide cuánto se explica una variable a partir de las demás; valores mayores a 10 indican colinealidad grave y valores menores a 5, aceptable.
+
+```{python}
+#| echo: false
+def factor_inflacion_varianza(datos, columnas):
+    """VIF_j = 1 / (1 - R²_j); equivale a la diagonal de la inversa de la matriz de correlación."""
+    matriz = datos[columnas].corr().values
+    return pd.Series(np.diag(np.linalg.inv(matriz)), index=columnas)
+
+
+numericas_antes = ["edad", "campana", "contactos_previos", "tasa_var_empleo", "ipc",
+                   "icc", "euribor3m", "num_empleados"]
+vif_antes = factor_inflacion_varianza(df, numericas_antes)
+vif_despues = factor_inflacion_varianza(df, variables_numericas_modelo)
+tabla_vif = (pd.DataFrame({"VIF_antes": vif_antes, "VIF_despues": vif_despues})
+             .reset_index(names="variable"))
+```
+
+```{r}
+#| label: tbl-vif
+#| tbl-cap: "Factor de inflación de la varianza (VIF) antes y después de la selección."
+tabla(py$tabla_vif)
+```
+
+La selección elimina la colinealidad: el VIF de `euribor3m` baja de **64.32 a 2.69** y el de `ipc`, de 6.31 a 2.05. Todas las variables finales tienen un VIF menor a 3 (@tbl-vif). Esto es importante sobre todo para la regresión logística, cuyos coeficientes se vuelven inestables e imposibles de interpretar cuando las variables están muy correlacionadas.
+
+## Codificación de variables categóricas y estandarización
+
+| Paso | Variables | Técnica | Justificación |
+|---|---|---|-----------|
+| Codificación | 8 categóricas | *One-hot encoding* (`OneHotEncoder`) | Son nominales: asignarles números (1, 2, 3...) inventaría un orden y distancias que no existen. En `educacion`, aunque es ordinal, la categoría `desconocido` no tiene lugar en el orden, por lo que también se usa *one-hot*. Las binarias (`tipo_contacto`, `contacto_previo`) se codifican con una sola columna (`drop="if_binary"`). |
+| Categorías nuevas | Todas las categóricas | Opción `handle_unknown` = ignore | Si en prueba aparece una categoría que no estuvo en entrenamiento (p. ej. los 3 clientes con `mora = yes`), se codifica como ceros en lugar de producir un error. |
+| Estandarización | 6 numéricas | `StandardScaler`: $z = (x - \bar{x}) / s$ | Las escalas son muy distintas (`euribor3m` entre 0.6 y 5; `ipc` alrededor de 93; `campana` hasta 56). La regresión logística regulariza todos los coeficientes con la misma penalización, por lo que necesita variables en la misma escala; además así sus coeficientes son comparables. |
+| Árbol de decisión | 6 numéricas | Sin estandarizar | Los árboles solo comparan un valor con un umbral, por lo que son invariantes a la escala. No escalar permite leer sus reglas en unidades reales (años, %, contactos). |
+
+: Codificación y escalado aplicados. {#tbl-codificacion tbl-colwidths="[17, 14, 21, 48]"}
+
+**Prevención de fuga en el preprocesamiento:** la codificación y el escalado se definen dentro de un `ColumnTransformer` que forma parte de un `Pipeline` junto con el modelo. Así, las medias, desviaciones y categorías se aprenden **solo con los datos de entrenamiento** (y, durante la validación cruzada, solo con las particiones de entrenamiento de cada iteración). Si se escalara el dataset completo antes de dividirlo, el modelo "vería" información del conjunto de prueba.
+
+```{python}
+#| echo: false
+# Codificación y escalado dentro de un ColumnTransformer: se ajusta SOLO con entrenamiento
+preprocesador = ColumnTransformer([
+    ("num", StandardScaler(), variables_numericas_modelo),
+    ("cat", OneHotEncoder(handle_unknown="ignore", drop="if_binary", sparse_output=False),
+     variables_categoricas_modelo),
+])
+
+# El árbol es invariante a la escala: no se estandariza para que sus umbrales
+# queden en las unidades originales (años, %, contactos) y se puedan leer
+preprocesador_arbol = ColumnTransformer([
+    ("num", "passthrough", variables_numericas_modelo),
+    ("cat", OneHotEncoder(handle_unknown="ignore", drop="if_binary", sparse_output=False),
+     variables_categoricas_modelo),
+])
+```
+
+\newpage
+
+# DIVISIÓN EN CONJUNTOS DE ENTRENAMIENTO Y PRUEBA
+
+Se usa `train_test_split` con una proporción **80/20**, **estratificada** por la variable objetivo y con semilla fija (`random_state = 42`).
+
+```{python}
+#| echo: false
+X = df[variables_modelo]
+y = y_binaria
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.20, stratify=y, random_state=SEMILLA)
+
+resumen_division = pd.DataFrame({
+    "conjunto": ["Entrenamiento", "Prueba", "Total"],
+    "registros": [len(X_train), len(X_test), len(X)],
+    "porcentaje": [100 * len(X_train) / len(X), 100 * len(X_test) / len(X), 100],
+    "suscripciones": [y_train.sum(), y_test.sum(), y.sum()],
+    "tasa_aceptacion_%": [100 * y_train.mean(), 100 * y_test.mean(), 100 * y.mean()],
+})
+
+# Verificación: la selección por IV no cambia si se calcula solo con entrenamiento
+iv_train = {c: valor_informacion(df.loc[X_train.index, c], y_train) for c in variables_candidatas}
+sin_poder_total = set(tabla_iv.loc[tabla_iv["IV"] < 0.02, "variable"])
+sin_poder_train = {c for c, v in iv_train.items() if v < 0.02}
+print(f"Variables con IV < 0.02 (todo el dataset):    {sorted(sin_poder_total)}")
+print(f"Variables con IV < 0.02 (solo entrenamiento): {sorted(sin_poder_train)}")
+print(f"¿Misma selección?: {sin_poder_total == sin_poder_train}")
+
+# Dimensión de la matriz de entrada tras codificar (ajustando solo con entrenamiento)
+n_columnas = clone(preprocesador).fit(X_train).transform(X_train).shape[1]
+print(f"\n{len(variables_modelo)} variables -> {n_columnas} columnas tras la codificación one-hot")
+```
+
+```{r}
+#| label: tbl-division
+#| tbl-cap: "Tamaño y tasa de aceptación de los conjuntos de entrenamiento y prueba."
+tabla(py$resumen_division)
+```
+
+**Justificación del 80/20 y de la estratificación**
+
+- **Por qué 80/20 y no 70/30:** la clase positiva es escasa (11.27%). Con 80% para entrenar el modelo dispone de **3,711 suscripciones** para aprender sus patrones, unas 460 más que con 70%. A la vez, el 20% de prueba (**8,236 registros, 928 suscripciones**) es suficiente para estimar las métricas con poca incertidumbre: el error estándar de un *recall* cercano a 0.5 con 928 positivos es de unos $\sqrt{0.5 \cdot 0.5 / 928} \approx 1.6$ puntos porcentuales.
+- **Por qué estratificar:** garantiza que ambos conjuntos tengan la misma tasa de aceptación (11.27%, @tbl-division). Sin estratificar, por azar, el conjunto de prueba podría tener más o menos positivos y las métricas no serían comparables.
+- **Uso del conjunto de prueba:** el ajuste de hiperparámetros se hace con **validación cruzada de 5 particiones dentro del entrenamiento**. El conjunto de prueba se usa **una sola vez**, al final, para evaluar los modelos ya elegidos; así sus métricas representan el rendimiento en datos nunca vistos.
+- **Comprobación de la selección:** recalculando el IV solo con el conjunto de entrenamiento, las variables sin poder predictivo son las mismas. La selección de variables no depende de información del conjunto de prueba.
+- Tras la codificación *one-hot*, las 14 variables se convierten en **46 columnas** de entrada.
+
+\newpage
+
+# ENTRENAMIENTO DE MODELOS DE MACHINE LEARNING
+
+## Selección de modelos
+
+Se entrenan tres modelos de la lista propuesta, elegidos para cubrir tres niveles de complejidad e interpretabilidad, y se comparan contra una línea base.
+
+| Modelo | Lógica algorítmica | Por qué es adecuado para este problema |
+|---|------|------|
+| **Línea base** (*dummy*) | Predice siempre la clase más frecuente ("No"). | No es un modelo real: es el piso mínimo. Con el desbalance de 1 : 7.88, cualquier modelo útil debe superarla en métricas que no dependan de la clase mayoritaria. |
+| **Regresión Logística** | Combina linealmente las variables en un *log-odds* $z = \beta_0 + \sum \beta_j x_j$ y lo convierte en probabilidad con $p = 1/(1+e^{-z})$. | Es el estándar en banca por su transparencia: cada coeficiente se traduce en un *odds ratio*. Entrega probabilidades directamente. Su limitación es que solo capta relaciones lineales en el *log-odds*: no puede representar por sí sola la "U" de la edad ni interacciones como "Euribor baja **y** contacto previo". |
+| **Árbol de Decisión** (profundidad limitada) | Divide los datos con preguntas del tipo "¿`euribor3m` $\leq$ 1.24?" elegidas para separar al máximo las clases, hasta llegar a hojas con una proporción de suscripciones. | Capta relaciones no lineales e interacciones sin supuestos, y sus reglas pueden entregarse tal cual a un *call center*. Se limita la profundidad (máximo 6) para evitar que memorice el entrenamiento y para poder visualizarlo. |
+| **XGBoost** | *Gradient boosting*: construye cientos de árboles pequeños en secuencia; cada árbol corrige los errores de los anteriores y la predicción es la suma de todos (Chen y Guestrin, 2016). | Es el modelo de referencia en datos tabulares. Capta interacciones entre el contexto económico y el historial del cliente, incluye regularización contra el sobreajuste y maneja el desbalance con `scale_pos_weight`. Es menos interpretable, por lo que se explica con contribuciones exactas por variable (sección de explicabilidad). |
+
+: Modelos seleccionados y justificación. {#tbl-modelos tbl-colwidths="[18, 37, 45]"}
+
+**Métrica de selección: F1 de la clase positiva.** No se usa el *accuracy* para elegir hiperparámetros, porque con un 88.73% de "No" un modelo que nunca predice "Sí" ya obtiene 88.73% de *accuracy* sin servir para nada. El **F1** es la media armónica entre:
+
+- **Precision:** de los clientes que el modelo manda a llamar, qué proporción suscribe (eficiencia de las llamadas).
+- **Recall:** de los clientes que habrían suscrito, qué proporción detecta el modelo (depósitos captados).
+
+El F1 solo es alto si ambas lo son, lo que equilibra los dos tipos de error del negocio.
+
+## Entrenamiento y ajuste de hiperparámetros
+
+| Modelo | Técnica | Hiperparámetros explorados |
+|---|---|------|
+| Regresión Logística | *Grid search* (12 combinaciones) | `C` (inversa de la regularización): 0.01, 0.1, 1, 10. `class_weight`: ninguno, `balanced` (peso 7.88 a los positivos) o 3 : 1. |
+| Árbol de Decisión | *Grid search* (36 combinaciones) | `max_depth`: 3 a 6. `min_samples_leaf`: 20, 50, 100. `class_weight`: los mismos tres valores. |
+| XGBoost | *Random search* (30 de 6,912 combinaciones) | `n_estimators`, `learning_rate`, `max_depth`, `min_child_weight`, `subsample`, `colsample_bytree` y `scale_pos_weight` (1, 3, 5, 7.88). |
+
+: Estrategia de ajuste de hiperparámetros. {#tbl-busqueda tbl-colwidths="[20, 25, 55]"}
+
+- **Por qué *grid search* en los dos primeros:** tienen pocos hiperparámetros y la grilla completa se evalúa en segundos.
+- **Por qué *random search* en XGBoost:** su espacio tiene 6,912 combinaciones; evaluarlas todas con 5 particiones serían 34,560 entrenamientos. La búsqueda aleatoria explora el espacio con 30 combinaciones y, como solo unos pocos hiperparámetros importan de verdad, suele encontrar soluciones tan buenas como la grilla completa con una fracción del costo (Bergstra y Bengio, 2012).
+- **El tratamiento del desbalance también se ajusta:** en lugar de fijar a priori cuánto pesar la clase positiva, se incluye como hiperparámetro (`class_weight` o `scale_pos_weight`) y la validación cruzada elige el valor que maximiza el F1.
+
+```{python}
+#| echo: false
+# ---------------------------------------------------------------
+# Entrenamiento con validación cruzada estratificada de 5 particiones
+# ---------------------------------------------------------------
+validacion = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEMILLA)
+pesos_clase = [None, "balanced", {0: 1, 1: 3}]   # tres formas de tratar el desbalance
+
+configuracion_modelos = {
+    "Regresión Logística": dict(
+        pipeline=Pipeline([("prep", preprocesador),
+                           ("modelo", LogisticRegression(max_iter=2000))]),
+        espacio={"modelo__C": [0.01, 0.1, 1, 10],
+                 "modelo__class_weight": pesos_clase},
+        busqueda="grid"),
+    "Árbol de Decisión": dict(
+        pipeline=Pipeline([("prep", preprocesador_arbol),
+                           ("modelo", DecisionTreeClassifier(random_state=SEMILLA))]),
+        espacio={"modelo__max_depth": [3, 4, 5, 6],
+                 "modelo__min_samples_leaf": [20, 50, 100],
+                 "modelo__class_weight": pesos_clase},
+        busqueda="grid"),
+    "XGBoost": dict(
+        pipeline=Pipeline([("prep", preprocesador),
+                           ("modelo", XGBClassifier(eval_metric="logloss", tree_method="hist",
+                                                    random_state=SEMILLA, n_jobs=1))]),
+        espacio={"modelo__n_estimators": [100, 200, 300, 500],
+                 "modelo__learning_rate": [0.01, 0.03, 0.05, 0.1],
+                 "modelo__max_depth": [2, 3, 4, 5],
+                 "modelo__min_child_weight": [1, 5, 10],
+                 "modelo__subsample": [0.7, 0.8, 1.0],
+                 "modelo__colsample_bytree": [0.6, 0.8, 1.0],
+                 "modelo__scale_pos_weight": [1, 3, 5, 7.88]},
+        busqueda="random"),
+}
+
+# Las combinaciones se evalúan en paralelo (n_jobs=-1, un proceso por núcleo); cada XGBoost
+# usa un solo hilo (n_jobs=1) para no competir por los núcleos con esos procesos.
+modelos = {}          # mejor pipeline de cada modelo, reentrenado con todo el entrenamiento
+filas_ajuste = []
+for nombre, cfg in configuracion_modelos.items():
+    if cfg["busqueda"] == "grid":
+        buscador = GridSearchCV(cfg["pipeline"], cfg["espacio"], scoring="f1",
+                                cv=validacion, n_jobs=-1)
+    else:
+        buscador = RandomizedSearchCV(cfg["pipeline"], cfg["espacio"], n_iter=30, scoring="f1",
+                                      cv=validacion, n_jobs=-1, random_state=SEMILLA)
+    inicio = time.time()
+    _ = buscador.fit(X_train, y_train)
+    modelos[nombre] = buscador.best_estimator_
+    i = buscador.best_index_
+    mejores = {k.replace("modelo__", ""): v for k, v in buscador.best_params_.items()}
+    filas_ajuste.append({
+        "modelo": nombre,
+        "mejores_hiperparametros": ", ".join(f"{k} = {v}" for k, v in mejores.items()),
+        "F1_cv_media": buscador.cv_results_["mean_test_score"][i],
+        "F1_cv_desv": buscador.cv_results_["std_test_score"][i],
+        "F1_entrenamiento": f1_score(y_train, buscador.predict(X_train)),
+        "segundos": time.time() - inicio,
+    })
+
+ajuste_modelos = pd.DataFrame(filas_ajuste)
+```
+
+```{r}
+#| label: tbl-ajuste
+#| tbl-cap: "Mejores hiperparámetros y F1 en validación cruzada (media y desviación de las 5 particiones) y en entrenamiento."
+py$ajuste_modelos |>
+  kable(booktabs = TRUE, linesep = "", digits = 3,
+        col.names = c("Modelo", "Mejores hiperparámetros", "F1 CV (media)",
+                      "F1 CV (desv.)", "F1 entren.", "Segundos")) |>
+  kable_styling(latex_options = c("HOLD_position", "striped"), font_size = 8) |>
+  row_spec(0, bold = TRUE) |>
+  column_spec(1, width = "2.3cm") |>
+  column_spec(2, width = "5.8cm")
+```
+
+**Interpretación del ajuste (@tbl-ajuste)**
+
+- **Los tres modelos eligieron el mismo tratamiento del desbalance: un peso de 3 : 1 a favor de los positivos**, ni ignorar el desbalance (peso 1) ni compensarlo por completo (7.88). Sin pesos, los modelos predicen "Sí" muy pocas veces y el *recall* cae; con el balance completo, predicen "Sí" demasiado y la *precision* se desploma. El punto intermedio maximiza el F1.
+- **Regresión Logística:** `C = 0.1` indica que un poco de regularización ayuda: con 46 columnas, muchas de ellas categorías pequeñas (por ejemplo, `mes_dec` con 0.44% de los registros), la penalización evita coeficientes exagerados.
+- **Árbol de Decisión:** la búsqueda eligió la mayor profundidad permitida (6) con hojas de al menos 20 registros. La profundidad máxima no se amplió más porque el objetivo del árbol en este proyecto es ser interpretable.
+- **No hay sobreajuste relevante:** el F1 en entrenamiento supera al de validación cruzada en apenas 0.003 (logística), 0.013 (árbol) y 0.027 (XGBoost). La desviación entre particiones es baja (alrededor de 0.01), por lo que la diferencia de unos 0.03 entre la logística (0.470) y XGBoost (0.500) es consistente y no es producto del azar de una partición.
+
+\newpage
+
+# EVALUACIÓN DE MODELOS
+
+Cada modelo, ya ajustado, se evalúa una única vez en el conjunto de prueba con *accuracy*, *precision*, *recall* y F1 (umbral de decisión 0.5). Se añaden dos métricas que no dependen del umbral: el **AUC-ROC** (probabilidad de que un cliente que suscribe reciba un puntaje mayor que uno que no) y el **AUC-PR** (área bajo la curva *precision-recall*, más exigente cuando la clase positiva es escasa).
+
+```{python}
+#| echo: false
+# Línea base: predice siempre la clase mayoritaria ("No"); sirve de referencia mínima
+modelos_evaluar = {"Línea base (siempre No)":
+                   DummyClassifier(strategy="most_frequent").fit(X_train, y_train)}
+modelos_evaluar.update(modelos)
+
+filas = []
+predicciones, probabilidades = {}, {}
+for nombre, modelo in modelos_evaluar.items():
+    pred = modelo.predict(X_test)
+    prob = modelo.predict_proba(X_test)[:, 1]
+    predicciones[nombre], probabilidades[nombre] = pred, prob
+    filas.append({
+        "modelo": nombre,
+        "accuracy": accuracy_score(y_test, pred),
+        "precision": precision_score(y_test, pred, zero_division=0),
+        "recall": recall_score(y_test, pred),
+        "F1": f1_score(y_test, pred),
+        "AUC_ROC": roc_auc_score(y_test, prob),
+        "AUC_PR": average_precision_score(y_test, prob),
+    })
+metricas_test = pd.DataFrame(filas)
+
+nombre_mejor = metricas_test.iloc[1:].sort_values("F1", ascending=False)["modelo"].iloc[0]
+print(f"Mejor modelo según F1 en prueba: {nombre_mejor}")
+```
+
+```{r}
+#| label: tbl-metricas
+#| tbl-cap: "Métricas de los modelos en el conjunto de prueba (8,236 registros)."
+tabla(py$metricas_test, digitos = 3)
+```
+
+```{python}
+#| echo: false
+#| label: fig-matrices
+#| fig-cap: "Matrices de confusión en el conjunto de prueba."
+fig, ejes = plt.subplots(1, 4, figsize=(22, 5))
+for eje, (nombre, pred) in zip(ejes, predicciones.items()):
+    mc = confusion_matrix(y_test, pred)
+    etiquetas = np.array([[f"{v:,}\n({100 * v / mc.sum():.1f}%)" for v in fila] for fila in mc])
+    _ = sns.heatmap(mc, annot=etiquetas, fmt="", cmap="Blues", cbar=False, ax=eje,
+                xticklabels=["No", "Sí"], yticklabels=["No", "Sí"], annot_kws={"size": 13})
+    _ = eje.set_title(nombre, fontsize=13)
+    _ = eje.set_xlabel("Predicción")
+    _ = eje.set_ylabel("Valor real")
+_ = plt.suptitle("Matrices de confusión (conjunto de prueba)", fontsize=15)
+guardar_figura("02_matrices_confusion")
+```
+
+**Interpretación de las métricas y de las matrices de confusión (@tbl-metricas y @fig-matrices)**
+
+- **La paradoja del *accuracy*.** La línea base alcanza **88.73%** de *accuracy* sin detectar a un solo cliente que suscribe (F1 = 0). Los tres modelos tienen un *accuracy* prácticamente igual (88.4% a 88.7%), pero un F1 de 0.49 a 0.52. El *accuracy* no sirve para comparar modelos en este problema; las métricas relevantes son las de la clase positiva.
+- **XGBoost es el mejor modelo en todas las métricas de la clase positiva:** F1 = **0.522**, *precision* = 0.499, *recall* = 0.547, AUC-ROC = **0.812** y AUC-PR = 0.477. El árbol queda muy cerca (F1 = 0.514) y la regresión logística, algo más atrás (F1 = 0.489).
+- **Lectura de la matriz de XGBoost:** de los 928 clientes de prueba que suscribieron, detecta **508** (verdaderos positivos) y deja escapar **420** (falsos negativos). De los 7,308 que no suscribieron, clasifica bien 6,798 y marca por error a **510** (falsos positivos). Es decir, cuando el modelo dice "Sí", acierta aproximadamente una de cada dos veces.
+- **Las métricas en prueba coinciden con las de validación cruzada** (F1 de 0.47 a 0.50 en CV frente a 0.49 a 0.52 en prueba), lo que confirma que los modelos generalizan a datos no vistos *de la misma época*. Esta última aclaración es importante y se analiza en la autopsia.
+
+```{python}
+#| echo: false
+#| label: fig-curvas
+#| fig-cap: "Curvas ROC y Precision-Recall de los modelos en el conjunto de prueba."
+fig, (eje_roc, eje_pr) = plt.subplots(1, 2, figsize=(15, 6))
+for nombre in modelos:
+    fpr, tpr, _ = roc_curve(y_test, probabilidades[nombre])
+    prec, rec, _ = precision_recall_curve(y_test, probabilidades[nombre])
+    fila = metricas_test.set_index("modelo").loc[nombre]
+    _ = eje_roc.plot(fpr, tpr, label=f"{nombre} (AUC = {fila['AUC_ROC']:.3f})")
+    _ = eje_pr.plot(rec, prec, label=f"{nombre} (AP = {fila['AUC_PR']:.3f})")
+_ = eje_roc.plot([0, 1], [0, 1], color="gray", linestyle="--", label="Azar (AUC = 0.5)")
+_ = eje_pr.axhline(y_test.mean(), color="gray", linestyle="--",
+               label=f"Azar (tasa base = {y_test.mean():.3f})")
+_ = eje_roc.set(title="Curva ROC", xlabel="Tasa de falsos positivos",
+            ylabel="Recall (tasa de verdaderos positivos)")
+_ = eje_pr.set(title="Curva Precision-Recall", xlabel="Recall", ylabel="Precision")
+_ = eje_roc.legend(loc="lower right")
+_ = eje_pr.legend(loc="upper right")
+guardar_figura("03_curvas_roc_pr")
+```
+
+**Interpretación de las curvas (@fig-curvas)**
+
+- **Curva ROC:** las tres curvas están muy por encima de la diagonal del azar y casi superpuestas; XGBoost y el árbol quedan ligeramente por encima de la logística en la zona de baja tasa de falsos positivos, que es la relevante para una campaña (llamar a pocos clientes).
+- **Curva *precision-recall*:** muestra el compromiso que el banco debe decidir. En XGBoost, si se llama solo a los clientes con mayor puntaje (*recall* de 10% a 20%), la *precision* es de 67% a 78%; si se quiere captar el 70% de los suscriptores, la *precision* cae a 33%. La línea punteada (11.3%) es la *precision* de llamar al azar, que es lo que hace hoy la campaña masiva. Esto indica que el umbral 0.5 no es obligatorio: el banco puede moverlo según el costo de una llamada y el valor de un depósito.
+
+```{python}
+#| echo: false
+# Lectura de negocio del mejor modelo: ¿a cuántos clientes llamaríamos y cuántos aceptarían?
+pred_mejor = predicciones[nombre_mejor]
+llamados = pred_mejor.sum()
+aciertos = ((pred_mejor == 1) & (y_test == 1)).sum()
+impacto = pd.DataFrame({
+    "estrategia": ["Llamar a todos (situación actual)",
+                   f"Llamar solo a los que predice {nombre_mejor}"],
+    "clientes_llamados": [len(y_test), llamados],
+    "pct_base_llamada": [100.0, 100 * llamados / len(y_test)],
+    "suscripciones": [y_test.sum(), aciertos],
+    "pct_suscripciones": [100.0, 100 * aciertos / y_test.sum()],
+    "conversion_%": [100 * y_test.mean(), 100 * aciertos / llamados],
+})
+print(f"Lift: la tasa de conversión se multiplica por "
+      f"{impacto['conversion_%'].iloc[1] / impacto['conversion_%'].iloc[0]:.2f}")
+```
+
+```{r}
+#| label: tbl-impacto
+#| tbl-cap: "Impacto de negocio de usar XGBoost para decidir a quién llamar (conjunto de prueba)."
+py$impacto |>
+  kable(booktabs = TRUE, linesep = "", digits = 2, format.args = list(big.mark = ","),
+        col.names = c("Estrategia", "Llamados", "% de la base", "Suscripciones", "% de suscripciones", "Conversión (%)")) |>
+  kable_styling(latex_options = c("HOLD_position", "striped"), font_size = 8) |>
+  row_spec(0, bold = TRUE)
+```
+
+**Impacto de negocio (@tbl-impacto).** Si el banco hubiera llamado solo a los clientes que XGBoost marca como "Sí", habría realizado **1,018 llamadas (12.36% de la base)** y captado **508 depósitos (54.74% del total posible)**. La tasa de conversión pasaría de **11.27% a 49.90%**, es decir, **4.43 veces** más eficiente. El costo es renunciar al 45% de los depósitos (los falsos negativos), que el banco podría intentar captar con un canal más barato (correo, aplicación móvil) en lugar de una llamada.
+
+\newpage
+
+# EXPLICABILIDAD DEL MODELO
+
+El mejor modelo es **XGBoost**. Como es un conjunto de 300 árboles, no puede "leerse" directamente; para explicarlo usamos dos herramientas:
+
+1. **La justificación de sus hiperparámetros**, que determinan cómo aprende.
+2. **Las contribuciones exactas de cada variable** a cada predicción (valores SHAP calculados con el algoritmo *TreeSHAP* que XGBoost trae incorporado, `pred_contribs=True`) (Lundberg y Lee, 2017). La salida de XGBoost es un *log-odds*:
+
+$$z = \underbrace{\text{valor base}}_{\text{punto de partida}} + \sum_{j} \underbrace{\phi_j}_{\text{contribución de la variable } j}, \qquad P(\text{Sí}) = \frac{1}{1 + e^{-z}}$$
+
+Una contribución positiva empuja al cliente hacia "Sí" y una negativa, hacia "No". Las contribuciones de las columnas *one-hot* de una misma variable se suman para leerlas como la variable original.
+
+Como complemento visual se muestra el **camino que siguen los mismos registros en el árbol de decisión**, que tiene un rendimiento cercano (F1 = 0.514) y se puede dibujar.
+
+## Justificación de los hiperparámetros de XGBoost
+
+```{python}
+#| echo: false
+modelo_xgb = modelos["XGBoost"]
+parametros_xgb = modelo_xgb.named_steps["modelo"].get_params()
+hiperparametros = ["n_estimators", "learning_rate", "max_depth", "min_child_weight",
+                   "subsample", "colsample_bytree", "scale_pos_weight"]
+print("Hiperparámetros elegidos por la búsqueda aleatoria:")
+for h in hiperparametros:
+    print(f"  {h:<17} = {parametros_xgb[h]}")
+```
+
+| Hiperparámetro | Valor | Qué controla | Por qué este valor es adecuado |
+|---|---|------|-------|
+| `n_estimators` (número de árboles) | 300 | Cuántos árboles se suman. | Va de la mano con `learning_rate`: con pasos pequeños se necesitan más árboles. La combinación 300 árboles con pasos de 0.05 corrige los errores de forma gradual y fue la de mayor F1 en validación cruzada entre las 30 evaluadas. |
+| `learning_rate` | 0.05 | Cuánto aporta cada árbol nuevo a la predicción. | Un valor bajo hace que cada árbol corrija solo una parte del error, lo que generaliza mejor que un aprendizaje agresivo (0.1) con pocos árboles. |
+| `max_depth` | 4 | Profundidad de cada árbol: hasta cuántas variables pueden interactuar. | Permite interacciones de hasta 4 variables (por ejemplo, Euribor × contacto previo × tipo de teléfono × edad), que son las que el EDA sugirió. Árboles más profundos memorizan el entrenamiento; la brecha de F1 entre entrenamiento y CV es solo 0.027. |
+| `min_child_weight` | 1 | Tamaño mínimo (en peso) de una hoja. | El valor mínimo permite hojas para segmentos pequeños pero muy relevantes, como los clientes con éxito previo (3.3% de la base, 65% de aceptación). El sobreajuste lo controlan los demás parámetros. |
+| `subsample` | 0.8 | Proporción de registros que ve cada árbol. | Cada árbol se entrena con un 80% aleatorio de los clientes (*stochastic boosting*): los árboles se equivocan de forma distinta y su suma tiene menor varianza. |
+| `colsample_bytree` | 0.8 | Proporción de columnas que ve cada árbol. | Evita que `euribor3m`, la variable dominante, aparezca en todos los árboles, y obliga al modelo a aprovechar también el historial y el perfil del cliente. |
+| `scale_pos_weight` | 3 | Peso de los clientes que suscriben en la función de pérdida. | Cada suscripción "cuenta" como tres clientes. Es el mismo equilibrio elegido por los otros modelos: compensar parcialmente el desbalance maximiza el F1. |
+
+: Justificación de los hiperparámetros de XGBoost. {#tbl-hiper-xgb tbl-colwidths="[25, 7, 21, 47]"}
+
+## Importancia global de las variables
+
+```{python}
+#| echo: false
+# ---------------------------------------------------------------
+# Contribuciones exactas (TreeSHAP) de XGBoost
+# ---------------------------------------------------------------
+prep_xgb = modelo_xgb.named_steps["prep"]
+booster = modelo_xgb.named_steps["modelo"].get_booster()
+columnas_transformadas = prep_xgb.get_feature_names_out()
+
+
+def variable_original(columna):
+    """Devuelve la variable original de una columna transformada ('cat__mes_may' -> 'mes')."""
+    nombre = columna.split("__", 1)[1]
+    for var in variables_categoricas_modelo:
+        if nombre.startswith(var + "_"):
+            return var
+    return nombre
+
+
+mapa_variables = [variable_original(c) for c in columnas_transformadas]
+
+
+def contribuciones_xgb(X_datos):
+    """
+    Contribuciones exactas de cada variable al log-odds de XGBoost.
+    Las columnas one-hot de una misma variable se suman para leerlas como la variable original.
+    La última columna que devuelve XGBoost es el valor base (sesgo).
+    """
+    matriz = prep_xgb.transform(X_datos)
+    contrib = booster.predict(DMatrix(matriz), pred_contribs=True)
+    sesgo = contrib[0, -1]
+    contrib = pd.DataFrame(contrib[:, :-1], columns=columnas_transformadas, index=X_datos.index)
+    contrib = contrib.T.groupby(mapa_variables).sum().T
+    return contrib, sesgo
+
+
+contrib_test, sesgo_xgb = contribuciones_xgb(X_test)
+
+# Comprobación: valor base + suma de contribuciones reproduce exactamente predict_proba
+logodds = sesgo_xgb + contrib_test.sum(axis=1)
+diferencia = np.abs(1 / (1 + np.exp(-logodds)) - modelo_xgb.predict_proba(X_test)[:, 1]).max()
+print(f"Valor base (log-odds): {sesgo_xgb:.4f} -> probabilidad base {1 / (1 + np.exp(-sesgo_xgb)):.4f}")
+print(f"Máxima diferencia entre la reconstrucción y predict_proba: {diferencia:.2e}")
+
+importancia_global = (contrib_test.abs().mean().sort_values(ascending=False)
+                      .reset_index(name="contribucion_media_abs")
+                      .rename(columns={"index": "variable"}))
+```
+
+```{python}
+#| echo: false
+#| label: fig-importancia
+#| fig-cap: "Importancia global de las variables en XGBoost (media del valor absoluto de la contribución en el conjunto de prueba)."
+#| out-width: "75%"
+_ = plt.figure(figsize=(9, 5.5))
+_ = sns.barplot(data=importancia_global, y="variable", x="contribucion_media_abs", color="steelblue")
+_ = plt.title("Importancia global en XGBoost: |contribución| media al log-odds")
+_ = plt.xlabel("Contribución absoluta media (log-odds)")
+_ = plt.ylabel("")
+guardar_figura("04_importancia_xgboost")
+```
+
+**Interpretación (@fig-importancia)**
+
+- La comprobación numérica muestra que **valor base + contribuciones reproduce `predict_proba` con un error de $4 \times 10^{-7}$**: la descomposición es exacta, no una aproximación.
+- **`euribor3m` domina con claridad** (0.56 de contribución media, más del doble que la segunda variable). El modelo se apoya, ante todo, en el **contexto económico del momento** en que se llama.
+- Le siguen `tipo_contacto` (0.21), y un grupo con aportes similares: `icc`, `contacto_previo`, `ipc`, `mes` y `campana` (0.10 a 0.11). Las variables del perfil (`edad`, `empleo`, `educacion`, `mora`, `estado_civil`) aportan menos.
+- Este orden coincide con el EDA (la Euribor, el historial y el canal eran las mayores diferencias en la tasa de aceptación), lo que da confianza en que el modelo aprendió patrones reales. Pero también anticipa su riesgo: cuatro de las siete variables más importantes (`euribor3m`, `icc`, `ipc` y `mes`) describen **cuándo** se llamó y no **a quién**.
+- **Nota sobre las probabilidades:** el valor base es $-0.967$ en *log-odds*, es decir, una probabilidad de partida de **27.5%** y no de 11.3%. Esto se debe a `scale_pos_weight = 3`, que hace que el modelo "vea" tres veces más suscripciones. Por eso la probabilidad media predicha en prueba es 22.1% frente a una tasa real de 11.3%: **las probabilidades de este modelo son puntajes para ordenar clientes, no probabilidades calibradas.** Si el banco necesitara probabilidades reales (por ejemplo, para proyectar cuántos depósitos captará), habría que calibrarlas (por ejemplo, con regresión isotónica).
+
+## Extracción de casos correctamente clasificados
+
+Se aíslan del conjunto de prueba tres registros reales bien clasificados por XGBoost con distinto nivel de confianza: el "Sí" con mayor probabilidad (Caso A), el "No" con menor probabilidad (Caso B) y un "Sí" con confianza moderada, cercana a 0.60 (Caso C), para mostrar también una decisión menos obvia.
+
+```{python}
+#| echo: false
+# Resultados del mejor modelo sobre X_test, con los valores originales (sin escalar)
+prob_xgb = probabilidades["XGBoost"]
+resultados_test = X_test.copy()
+resultados_test["real"] = y_test
+resultados_test["prediccion"] = predicciones["XGBoost"]
+resultados_test["prob_si"] = prob_xgb
+
+es_vp = (resultados_test["real"] == 1) & (resultados_test["prediccion"] == 1)
+es_vn = (resultados_test["real"] == 0) & (resultados_test["prediccion"] == 0)
+verdaderos_pos, verdaderos_neg = resultados_test[es_vp], resultados_test[es_vn]
+
+# Tres casos bien clasificados con distinto nivel de confianza
+casos_correctos = {
+    "Caso A": verdaderos_pos["prob_si"].idxmax(),                  # Sí con máxima confianza
+    "Caso B": verdaderos_neg["prob_si"].idxmin(),                  # No con máxima confianza
+    "Caso C": (verdaderos_pos["prob_si"] - 0.60).abs().idxmin(),   # Sí con confianza moderada
+}
+indices_casos = list(casos_correctos.values())
+
+print("Valores exactos de los tres registros de X_test:\n")
+print(X_test.loc[indices_casos].set_axis(list(casos_correctos), axis=0).T.to_string())
+```
+
+## Análisis de probabilidades con `predict_proba()`
+
+```{python}
+#| echo: false
+# predict_proba: confianza con la que el modelo clasifica cada caso
+proba_casos = modelo_xgb.predict_proba(X_test.loc[indices_casos])
+tabla_proba_casos = pd.DataFrame({
+    "caso": list(casos_correctos),
+    "indice": indices_casos,
+    "P(No)": proba_casos[:, 0],
+    "P(Sí)": proba_casos[:, 1],
+    "prediccion": np.where(proba_casos[:, 1] >= 0.5, "Sí", "No"),
+    "real": np.where(y_test.loc[indices_casos] == 1, "Sí", "No"),
+})
+print(tabla_proba_casos.to_string(index=False, float_format="{:.4f}".format))
+```
+
+- **Caso A** (índice 39636): $P(\text{Sí}) = 0.951$. El modelo está prácticamente seguro de que suscribirá, y acierta.
+- **Caso B** (índice 18681): $P(\text{Sí}) = 0.006$, es decir, 99.4% de confianza en "No". También acierta.
+- **Caso C** (índice 36998): $P(\text{Sí}) = 0.601$. Lo clasifica como "Sí" con una confianza moderada, apenas 0.10 sobre el umbral.
+
+## Justificación algorítmica paso a paso
+
+```{python}
+#| echo: false
+def paso_a_paso(indice, n_top=6):
+    """Descompone la predicción de XGBoost: valor base + contribuciones = log-odds -> probabilidad."""
+    contrib = contrib_test.loc[indice]
+    orden = contrib.abs().sort_values(ascending=False).index
+    principales = contrib[orden[:n_top]]
+    resto = contrib[orden[n_top:]].sum()
+    filas = [{"paso": "Valor base (log-odds)", "valor_variable": "", "contribucion": sesgo_xgb}]
+    for var, valor in principales.items():
+        filas.append({"paso": var, "valor_variable": str(X_test.loc[indice, var]),
+                      "contribucion": valor})
+    filas.append({"paso": f"Resto ({len(orden) - n_top} variables)", "valor_variable": "",
+                  "contribucion": resto})
+    tabla_pasos = pd.DataFrame(filas)
+    tabla_pasos["log_odds_acumulado"] = tabla_pasos["contribucion"].cumsum()
+    z = tabla_pasos["log_odds_acumulado"].iloc[-1]
+    tabla_pasos.loc[len(tabla_pasos)] = {"paso": "P(Sí) = 1 / (1 + exp(-z))", "valor_variable": "",
+                                         "contribucion": np.nan,
+                                         "log_odds_acumulado": 1 / (1 + np.exp(-z))}
+    return tabla_pasos
+
+
+pasos_caso_a = paso_a_paso(casos_correctos["Caso A"])
+pasos_caso_b = paso_a_paso(casos_correctos["Caso B"])
+pasos_caso_c = paso_a_paso(casos_correctos["Caso C"])
+```
+
+```{python}
+#| echo: false
+#| label: fig-contribuciones-casos
+#| fig-cap: "Contribución de cada variable al log-odds de XGBoost en los tres casos bien clasificados (verde: empuja hacia Sí; rojo: empuja hacia No)."
+def graficar_contribuciones(casos, nombre_archivo, n_top=8, columnas=2):
+    """Barras horizontales con las n_top contribuciones más grandes de cada caso (grilla de 2 columnas)."""
+    filas_grafico = int(np.ceil(len(casos) / columnas))
+    fig, ejes = plt.subplots(filas_grafico, columnas, figsize=(8 * columnas, 4.5 * filas_grafico))
+    ejes = np.atleast_1d(ejes).flatten()
+    for eje in ejes[len(casos):]:
+        eje.set_visible(False)
+    for eje, (titulo, indice) in zip(ejes, casos.items()):
+        contrib = contrib_test.loc[indice]
+        top = contrib[contrib.abs().sort_values(ascending=False).index[:n_top]][::-1]
+        etiquetas = [f"{v} = {X_test.loc[indice, v]}" for v in top.index]
+        eje.barh(etiquetas, top.values,
+                 color=["seagreen" if v > 0 else "indianred" for v in top.values])
+        eje.axvline(0, color="black", linewidth=0.8)
+        prob = resultados_test.loc[indice, "prob_si"]
+        eje.set_title(f"{titulo}\nP(Sí) = {prob:.3f}", fontsize=12)
+        eje.set_xlabel("Contribución al log-odds")
+    guardar_figura(nombre_archivo)
+
+
+graficar_contribuciones(casos_correctos, "05_contribuciones_casos_correctos")
+```
+
+```{r}
+#| label: tbl-pasos-a
+#| tbl-cap: "Caso A: construcción paso a paso de la predicción de XGBoost."
+tabla(py$pasos_caso_a, digitos = 3)
+```
+
+**Caso A: jubilable con historial exitoso en un periodo de tasas bajas ($P(\text{Sí}) = 0.951$).** Cliente de 60 años, administrativo, casado, contactado por celular en mayo con una Euribor de 0.68%, con 2 contactos previos y una campaña anterior exitosa.
+
+1. Se parte del valor base: $z = -0.967$ (27.5%).
+2. **`euribor3m` = 0.682 suma +1.906** ($z = 0.938$). Es el aporte más grande: una Euribor tan baja corresponde al periodo de 2010, donde la aceptación fue muy alta. Notar que el mes es mayo, el mes de peor conversión del EDA, y aun así el modelo no se confunde: la Euribor le indica que no es el mayo masivo de 2008, y `mes` solo resta 0.1.
+3. **`contacto_previo` = Sí suma +1.020** ($z = 1.958$) y **`resultado_previo` = success, +0.324** ($z = 2.282$): el historial exitoso, la señal más fuerte del EDA (65% de aceptación).
+4. **`edad` = 60 suma +0.238**: el modelo aprendió que la aceptación crece en los mayores (la "U" del EDA). `icc` (+0.181) e `ipc` (+0.148) refuerzan el efecto del periodo, y las 8 variables restantes suman +0.124.
+5. Resultado: $z = 2.973$ y $P(\text{Sí}) = 1/(1+e^{-2.973}) = 0.951$.
+
+```{r}
+#| label: tbl-pasos-b
+#| tbl-cap: "Caso B: construcción paso a paso de la predicción de XGBoost."
+tabla(py$pasos_caso_b, digitos = 3)
+```
+
+**Caso B: cliente sobrecontactado en el periodo de tasas altas ($P(\text{Sí}) = 0.006$).** Técnico de 47 años, casado, contactado en julio con una Euribor de 4.97%, sin historial previo y con **18 contactos** en la campaña actual.
+
+1. Desde $z = -0.967$, **`campana` = 18 resta 2.221** ($z = -3.188$). Es la contribución individual más grande de los tres casos. El modelo aprendió el patrón de "insistencia excesiva" del EDA: con más de 10 contactos la aceptación cae a 3.11%.
+2. **`euribor3m` = 4.968 resta 0.790** ($z = -3.979$): periodo de tasas altas, donde la aceptación fue de solo 4.84%.
+3. `icc` ($-0.264$), `empleo` = technician ($-0.218$), `edad` = 47 ($-0.199$, el valle de la "U") e `ipc` ($-0.193$) terminan de empujar hacia "No"; el resto suma $-0.206$.
+4. Resultado: $z = -5.059$ y $P(\text{Sí}) = 0.006$. Ninguna variable empuja hacia "Sí": es un "No" claro.
+
+```{r}
+#| label: tbl-pasos-c
+#| tbl-cap: "Caso C: construcción paso a paso de la predicción de XGBoost."
+tabla(py$pasos_caso_c, digitos = 3)
+```
+
+**Caso C: un "Sí" moderado que depende casi solo del periodo ($P(\text{Sí}) = 0.601$).** Administrativo de 37 años con estudios universitarios, contactado por celular en julio con una Euribor de 1.05%, sin historial y con 2 contactos.
+
+1. Desde $z = -0.967$, **`euribor3m` = 1.048 suma +1.144** ($z = 0.177$): por sí sola convierte una predicción de "No" en una de "Sí".
+2. Luego hay empujes pequeños en ambos sentidos: `edad` = 37 ($-0.146$), `contacto_previo` = No ($-0.142$), `mes` = jul ($+0.142$), `icc` = $-33.6$ ($+0.106$) y `tipo_contacto` = cellular ($+0.085$). El resto suma +0.188.
+3. Resultado: $z = 0.409$ y $P(\text{Sí}) = 0.601$.
+
+**Lectura crítica:** el acierto del Caso C es frágil. Sin el aporte de la Euribor, el resto de variables suma +0.233, lo que llevaría a $z = -0.73$ y $P(\text{Sí}) \approx 0.32$: "No". El modelo acertó porque el cliente fue llamado en un buen momento, no porque su perfil lo distinga. Esta dependencia del periodo reaparece en la autopsia.
+
+## Complemento visual: el camino de los casos en el árbol de decisión
+
+```{python}
+#| echo: false
+#| label: fig-arbol
+#| fig-cap: "Primeros tres niveles del árbol de decisión ajustado (las variables numéricas están en sus unidades originales; 'value' muestra la proporción ponderada No/Sí)."
+modelo_arbol = modelos["Árbol de Decisión"]
+arbol = modelo_arbol.named_steps["modelo"]
+prep_arbol = modelo_arbol.named_steps["prep"]
+columnas_arbol = [c.split("__", 1)[1] for c in prep_arbol.get_feature_names_out()]
+
+_ = plt.figure(figsize=(24, 10))
+_ = plot_tree(arbol, max_depth=3, feature_names=columnas_arbol, class_names=["No", "Sí"],
+          filled=True, impurity=False, proportion=True, rounded=True, fontsize=10)
+_ = plt.title(f"Árbol de decisión (profundidad total {arbol.get_depth()}, "
+          f"{arbol.get_n_leaves()} hojas; se muestran 3 niveles)", fontsize=15)
+guardar_figura("06_arbol_decision")
+```
+
+```{python}
+#| echo: false
+def camino_en_arbol(indice):
+    """Recorre el árbol nodo a nodo para un registro y describe cada condición evaluada."""
+    fila = prep_arbol.transform(X_test.loc[[indice]])
+    nodos = arbol.decision_path(fila).indices
+    t = arbol.tree_
+    pasos = []
+    for nodo in nodos:
+        if t.children_left[nodo] == -1:          # nodo hoja: fin del recorrido
+            prob = arbol.predict_proba(fila)[0, 1]
+            pasos.append(f"Hoja {nodo}: P(Sí) = {prob:.3f} -> predice {'Sí' if prob >= 0.5 else 'No'}")
+            continue
+        columna, umbral = columnas_arbol[t.feature[nodo]], t.threshold[nodo]
+        valor = fila[0, t.feature[nodo]]
+        if columna in variables_numericas_modelo:
+            signo = "<=" if valor <= umbral else ">"
+            pasos.append(f"{columna} = {valor:g} {signo} {umbral:.3f}")
+        else:                                    # columna one-hot: 'mes_may', 'contacto_previo_Sí'
+            var = variable_original("cat__" + columna)
+            categoria = columna[len(var) + 1:]
+            pasos.append(f"{var} {'=' if valor > 0.5 else '!='} {categoria}")
+    return pasos
+
+
+filas = []
+for caso, indice in casos_correctos.items():
+    for n, paso in enumerate(camino_en_arbol(indice), start=1):
+        filas.append({"caso": caso, "nivel": n, "condicion": paso})
+caminos_arbol = pd.DataFrame(filas)
+```
+
+```{r}
+#| label: tbl-caminos
+#| tbl-cap: "Camino condición por condición de los tres casos en el árbol de decisión."
+tabla(py$caminos_arbol)
+```
+
+El árbol completo tiene profundidad 6 y 49 hojas; la @fig-arbol muestra los tres primeros niveles. Como se entrenó con un peso 3 : 1, la proporción de cada nodo está ponderada (la raíz muestra 72.4% / 27.6% en lugar de 88.7% / 11.3%). La primera pregunta del árbol es **`euribor3m` $\leq$ 1.239**, que separa el periodo de tasas bajas (10.5% de los registros) del resto: el árbol confirma de forma independiente que el contexto económico es la variable dominante.
+
+- **Caso A:** `euribor3m` = 0.682 $\leq$ 1.239 $\rightarrow$ `contacto_previo` = Sí $\rightarrow$ `resultado_previo` = success $\rightarrow$ `icc` = $-40 \leq -34.7$ $\rightarrow$ `euribor3m` $\leq$ 1.039 $\rightarrow$ `campana` = 1 $\leq$ 3.5 $\rightarrow$ **hoja 38, $P(\text{Sí}) = 0.926$**. Las mismas tres razones que dio XGBoost (tasa baja, contacto previo, éxito previo), más una regla de negocio clara: pocos contactos en la campaña actual.
+- **Caso B:** `euribor3m` = 4.968 > 1.239 $\rightarrow$ > 3.191 $\rightarrow$ `mes` $\neq$ oct $\rightarrow$ `tipo_contacto` $\neq$ telephone $\rightarrow$ **`campana` = 18 > 11.5** $\rightarrow$ `educacion` $\neq$ university.degree $\rightarrow$ **hoja 85, $P(\text{Sí}) = 0.000$**. Otra vez coinciden el periodo de tasas altas y la insistencia excesiva: el árbol creó una regla específica para más de 11 contactos.
+- **Caso C:** `euribor3m` = 1.048 $\leq$ 1.239 $\rightarrow$ `contacto_previo` $\neq$ Sí $\rightarrow$ `tipo_contacto` $\neq$ telephone $\rightarrow$ `ipc` $\leq$ 92.681 $\rightarrow$ `euribor3m` > 0.738 $\rightarrow$ `edad` = 37 > 23.5 $\rightarrow$ **hoja 10, $P(\text{Sí}) = 0.556$**. Igual que en XGBoost, es un "Sí" moderado sostenido por el periodo y el canal, sin información fuerte del cliente.
+
+**Conclusión de la explicabilidad:** dos modelos con lógicas muy distintas (300 árboles sumados frente a un único árbol) llegan a la misma decisión por las mismas razones en los tres casos. Esto da confianza en que el modelo no decide por artefactos de los datos, pero también confirma que **el momento de la llamada pesa más que el perfil del cliente**.
+
+\newpage
+
+# AUTOPSIA DEL MODELO (ANÁLISIS DE FALLOS)
+
+## Construcción del DataFrame de errores
+
+Se construye un DataFrame con todas las filas de prueba donde la predicción de XGBoost (`y_pred`) es distinta del valor real (`y_test`) y se clasifica cada error.
+
+```{python}
+#| echo: false
+# ---------------------------------------------------------------
+# Autopsia: DataFrame con las filas donde y_pred != y_test
+# ---------------------------------------------------------------
+errores = resultados_test[resultados_test["prediccion"] != resultados_test["real"]].copy()
+errores["tipo_error"] = np.where(errores["prediccion"] == 1,
+                                 "Falso Positivo (Tipo I)", "Falso Negativo (Tipo II)")
+
+print(f"Registros mal clasificados: {len(errores):,} de {len(X_test):,} "
+      f"({100 * len(errores) / len(X_test):.2f}%)")
+print(errores["tipo_error"].value_counts().to_string())
+
+muestra_errores = (errores[["edad", "empleo", "mes", "resultado_previo", "euribor3m",
+                            "real", "prediccion", "prob_si", "tipo_error"]]
+                   .head(8).reset_index(names="indice")
+                   .astype({"mes": str, "empleo": str, "resultado_previo": str}))
+```
+
+```{r}
+#| label: tbl-muestra-errores
+#| tbl-cap: "Primeras filas del DataFrame de errores (columnas seleccionadas)."
+tabla(py$muestra_errores, digitos = 3)
+```
+
+## Clasificación del error y significado de negocio
+
+```{python}
+#| echo: false
+significado = {
+    "Falso Positivo (Tipo I)": "Se llama a un cliente que no suscribe: costo de la llamada, tiempo del agente y molestia al cliente.",
+    "Falso Negativo (Tipo II)": "No se llama a un cliente que sí habría suscrito: se pierde un depósito (costo de oportunidad).",
+}
+resumen_errores = (errores["tipo_error"].value_counts().rename_axis("tipo_error")
+                   .reset_index(name="registros"))
+resumen_errores["pct_errores"] = 100 * resumen_errores["registros"] / len(errores)
+resumen_errores["pct_prueba"] = 100 * resumen_errores["registros"] / len(X_test)
+resumen_errores["prob_media"] = resumen_errores["tipo_error"].map(
+    errores.groupby("tipo_error")["prob_si"].mean())
+resumen_errores["significado_negocio"] = resumen_errores["tipo_error"].map(significado)
+```
+
+```{r}
+#| label: tbl-tipos-error
+#| tbl-cap: "Tipos de error de XGBoost y su significado en el negocio."
+py$resumen_errores |>
+  kable(booktabs = TRUE, linesep = "", digits = 2,
+        col.names = c("Tipo de error", "Registros", "% de errores", "% de prueba",
+                      "P(Sí) media", "Significado en el negocio")) |>
+  kable_styling(latex_options = c("HOLD_position", "striped"), font_size = 9) |>
+  row_spec(0, bold = TRUE) |>
+  column_spec(1, width = "2.8cm") |>
+  column_spec(6, width = "6.2cm")
+```
+
+El modelo se equivoca en **930 de 8,236 registros (11.29%)**: **510 falsos positivos** y **420 falsos negativos** (@tbl-tipos-error).
+
+- **Falso Positivo (Error Tipo I):** el modelo dice "llámalo, va a suscribir" y el cliente rechaza. El costo es operativo: una llamada perdida, tiempo del agente y, sobre todo, **molestia para un cliente** que no tenía interés (justamente el problema de negocio que motivó el proyecto). Es un costo bajo por caso.
+- **Falso Negativo (Error Tipo II):** el modelo dice "no lo llames" y el cliente sí habría abierto el depósito. El costo es de oportunidad: **un depósito y la liquidez que aporta**. Por cliente, es mucho más caro que una llamada.
+
+Como un falso negativo cuesta más que un falso positivo, el banco podría preferir bajar el umbral por debajo de 0.5 y aceptar más llamadas fallidas a cambio de captar más depósitos (curva *precision-recall*, @fig-curvas).
+
+```{python}
+#| echo: false
+#| label: fig-prob-errores
+#| fig-cap: "Distribución de la probabilidad P(Sí) asignada por XGBoost según el tipo de resultado."
+resultados_test["resultado"] = np.select(
+    [es_vp, es_vn, (resultados_test["real"] == 0) & (resultados_test["prediccion"] == 1)],
+    ["Verdadero Positivo", "Verdadero Negativo", "Falso Positivo"], default="Falso Negativo")
+
+_ = plt.figure(figsize=(11, 4.8))
+_ = sns.boxplot(data=resultados_test, x="prob_si", y="resultado", hue="resultado", palette="Set2",
+            order=["Verdadero Negativo", "Falso Negativo", "Falso Positivo", "Verdadero Positivo"],
+            legend=False)
+_ = plt.axvline(0.5, color="black", linestyle="--", linewidth=1, label="Umbral 0.5")
+_ = plt.title("Probabilidad P(Sí) asignada por XGBoost según el tipo de resultado")
+_ = plt.xlabel("P(Sí)")
+_ = plt.ylabel("")
+_ = plt.legend()
+guardar_figura("07_probabilidad_por_resultado")
+```
+
+**¿Los errores están cerca de la frontera o son errores "con confianza"? (@fig-prob-errores)** Los falsos negativos tienen una probabilidad mediana de 0.18, muy parecida a la de los verdaderos negativos (0.13): para el modelo, **la mayoría de los clientes que suscribieron y no detectó son indistinguibles de los que no suscriben**. No es un problema de umbral: con la información disponible, el modelo no tiene señal para ellos. En cambio, los falsos positivos tienen una mediana de 0.65, cercana a la de los verdaderos positivos (0.71): son clientes con todas las características de quienes suscriben que, aun así, rechazaron.
+
+```{python}
+#| echo: false
+# ¿Dónde se concentran los errores? Recall y precision por segmento
+segmentos = {
+    "Euribor": np.where(resultados_test["euribor3m"] < 3, "< 3%", ">= 3%"),
+    "contacto_previo": resultados_test["contacto_previo"].astype(str),
+    "tipo_contacto": resultados_test["tipo_contacto"].astype(str),
+}
+filas = []
+for nombre_seg, valores in segmentos.items():
+    for categoria in sorted(set(valores)):
+        sub = resultados_test[valores == categoria]
+        filas.append({
+            "segmento": nombre_seg, "categoria": categoria, "registros": len(sub),
+            "tasa_real_%": 100 * sub["real"].mean(),
+            "pct_predicho_si": 100 * sub["prediccion"].mean(),
+            "FP": ((sub["real"] == 0) & (sub["prediccion"] == 1)).sum(),
+            "FN": ((sub["real"] == 1) & (sub["prediccion"] == 0)).sum(),
+            "recall": recall_score(sub["real"], sub["prediccion"], zero_division=0),
+            "precision": precision_score(sub["real"], sub["prediccion"], zero_division=0),
+        })
+errores_por_segmento = pd.DataFrame(filas)
+```
+
+```{r}
+#| label: tbl-errores-segmento
+#| tbl-cap: "Distribución de los errores de XGBoost por segmento (conjunto de prueba)."
+tabla(py$errores_por_segmento)
+```
+
+**Dónde se concentran los errores (@tbl-errores-segmento)**
+
+- **El modelo "apaga" el periodo de tasas altas.** Con una Euribor de 3% o más (5,566 registros, 68% de la prueba), predice "Sí" solo en el **0.25%** de los casos, aunque el 4.49% sí suscribió. Su *recall* allí es de **3.6%**: de 250 suscriptores, detecta 9. Este segmento concentra **241 de los 420 falsos negativos (57%)**.
+- **En el periodo de tasas bajas ocurre lo contrario:** predice "Sí" en el 37.6% de los casos y genera **505 de los 510 falsos positivos (99%)**.
+- **Clientes con contacto previo:** el modelo predice "Sí" en el 90% de ellos (la tasa real es 60.7%); casi no deja escapar a ninguno (*recall* 97.9%), pero 95 de ellos rechazan.
+- **Teléfono fijo:** *recall* de solo 25%; el modelo casi descarta este canal.
+
+**Hallazgo central de la autopsia:** en gran medida, el modelo no aprendió *qué clientes* suscriben, sino *en qué periodo* se suscribía más. Dentro de cada periodo, su capacidad de distinguir entre clientes es limitada.
+
+## Análisis manual a nivel de registro (*deep-dive*)
+
+Se seleccionan cinco filas del DataFrame de errores que representan los distintos modos de fallo: el falso negativo con menor probabilidad (Error 1), un falso negativo típico del periodo de tasas altas sin historial (Error 2), el falso negativo más cercano a la frontera (Error 3), el falso positivo con mayor probabilidad (Error 4) y el falso positivo más seguro entre los clientes sin campaña previa (Error 5).
+
+```{python}
+#| echo: false
+# Selección de cinco errores representativos de distintos modos de fallo
+falsos_neg = errores[errores["tipo_error"].str.startswith("Falso Negativo")]
+falsos_pos = errores[errores["tipo_error"].str.startswith("Falso Positivo")]
+fn_tasas_altas = falsos_neg[(falsos_neg["contacto_previo"] == "No") & (falsos_neg["euribor3m"] >= 3)]
+fp_sin_historial = falsos_pos[falsos_pos["resultado_previo"] == "nonexistent"]
+
+casos_error = {
+    "Error 1 (FN)": falsos_neg["prob_si"].idxmin(),             # FN con menor P(Sí)
+    "Error 2 (FN)": fn_tasas_altas["prob_si"].nsmallest(2).index[1],  # FN típico de tasas altas
+    "Error 3 (FN)": falsos_neg["prob_si"].idxmax(),             # FN en la frontera
+    "Error 4 (FP)": falsos_pos["prob_si"].idxmax(),             # FP con mayor P(Sí)
+    "Error 5 (FP)": fp_sin_historial["prob_si"].idxmax(),       # FP sin historial más seguro
+}
+indices_error = list(casos_error.values())
+
+detalle_errores = (errores.loc[indices_error, variables_modelo + ["prob_si", "tipo_error"]]
+                   .assign(prob_si=lambda d: d["prob_si"].round(3),
+                           tipo_error=lambda d: d["tipo_error"].str.replace("Falso Negativo", "FN")
+                                                               .str.replace("Falso Positivo", "FP"))
+                   .astype(str).T.set_axis(list(casos_error), axis=1)
+                   .reset_index(names="variable"))
+
+# Las cuatro contribuciones más fuertes de cada error
+filas = []
+for caso, indice in casos_error.items():
+    contrib = contrib_test.loc[indice]
+    for var in contrib.abs().sort_values(ascending=False).index[:4]:
+        filas.append({"caso": caso, "variable": var, "valor": str(X_test.loc[indice, var]),
+                      "contribucion": contrib[var]})
+contrib_errores = pd.DataFrame(filas)
+```
+
+```{r}
+#| label: tbl-detalle-errores
+#| tbl-cap: "Valores de los cinco registros mal clasificados seleccionados."
+py$detalle_errores |>
+  kable(booktabs = TRUE, linesep = "") |>
+  kable_styling(latex_options = c("HOLD_position", "striped"), font_size = 8) |>
+  row_spec(0, bold = TRUE)
+```
+
+```{python}
+#| echo: false
+#| label: fig-contribuciones-errores
+#| fig-cap: "Contribuciones de las variables en los cinco errores analizados (verde: empuja hacia Sí; rojo: empuja hacia No)."
+graficar_contribuciones(casos_error, "08_contribuciones_errores", n_top=7)
+```
+
+```{r}
+#| label: tbl-contrib-errores
+#| tbl-cap: "Las cuatro contribuciones más fuertes en cada uno de los cinco errores."
+tabla(py$contrib_errores, digitos = 3)
+```
+
+## Hipótesis y solución propuesta para cada caso
+
+**Error 1 (Falso Negativo, $P(\text{Sí}) = 0.032$). Cliente de 42 años, independiente (`self-employed`), universitario, contactado por teléfono fijo en julio con Euribor de 4.97%, sin historial y con 14 contactos en la campaña.**
+
+- *Por qué se confundió:* las cuatro señales más fuertes empujan a "No": `campana` = 14 ($-1.07$), Euribor alta ($-0.42$), `icc` ($-0.38$) y teléfono fijo ($-0.21$). El modelo aprendió, con razón, que la insistencia casi nunca funciona (3.11% de aceptación con más de 10 contactos).
+- *Hipótesis:* **creemos que el modelo falló porque `campana` mezcla intentos fallidos con llamadas acordadas.** Un trabajador independiente es difícil de ubicar en horario laboral; es probable que muchos de los 14 "contactos" fueran llamadas no contestadas o reprogramaciones a pedido del cliente, no 14 rechazos. Para el modelo, ambas situaciones son idénticas.
+- *Solución propuesta:* registrar el **resultado de cada intento** (no contesta, pide volver a llamar, rechaza, interesado) y crear variables como "número de rechazos explícitos" y "pidió que lo llamen", en lugar de un único contador.
+
+**Error 2 (Falso Negativo, $P(\text{Sí}) = 0.044$). Cliente de 57 años, divorciado, sector servicios, secundaria completa, contactado por teléfono fijo en mayo con Euribor de 4.86%, sin historial y con 5 contactos.**
+
+- *Por qué se confundió:* es el perfil exacto de la masa que no suscribe: el mayo masivo de 2008 con tasas altas ($-0.47$), teléfono fijo ($-0.41$), varios contactos ($-0.31$) y una edad en la zona media ($-0.19$). Ninguna variable lo distingue de los miles de clientes similares que rechazaron.
+- *Hipótesis:* **creemos que la decisión dependió de factores personales que el dataset no registra**, como haber recibido una liquidación, una herencia o el vencimiento de otro producto. Este es el modo de fallo más común: el 57% de los falsos negativos está en el periodo de tasas altas, donde el *recall* es de 3.6%.
+- *Solución propuesta:* incorporar **variables financieras del cliente**: saldo promedio en cuenta (la otra versión del dataset de UCI, *bank-full*, sí incluye `balance`), ingresos, vencimientos próximos de depósitos y movimientos recientes. Son variables que el banco ya tiene y que identifican liquidez disponible.
+
+**Error 3 (Falso Negativo en la frontera, $P(\text{Sí}) = 0.499$). Cliente de 24 años, administrativo, casado, educación básica (9 años), contactado por celular en mayo con Euribor de 1.28%, con un contacto previo exitoso y 1 contacto en la campaña.**
+
+- *Por qué se confundió:* recibe señales contradictorias. El contacto previo empuja fuerte a "Sí" ($+0.97$) y el éxito previo suma +0.18; pero `icc` = $-46.2$ ($-0.25$) y mayo ($-0.21$) restan. Además, una Euribor de 1.28% queda justo por encima del primer corte del árbol (1.239), en la transición entre los dos periodos. El resultado queda a 0.001 del umbral.
+- *Hipótesis:* **no es un error de conocimiento, sino de umbral:** el modelo estaba indeciso y un umbral fijo de 0.5 lo forzó a elegir.
+- *Solución propuesta:* definir una **"zona gris"** (por ejemplo, $P(\text{Sí})$ entre 0.4 y 0.6) en la que la decisión no la tome el modelo, sino un supervisor o un canal más barato (correo o mensaje), y fijar el umbral según el costo real de cada tipo de error.
+
+**Error 4 (Falso Positivo, $P(\text{Sí}) = 0.938$). Jubilado de 60 años, casado, curso técnico, contactado por celular en julio con Euribor de 0.90%, con 2 contactos previos, campaña anterior exitosa y 4 contactos en la campaña actual.**
+
+- *Por qué se confundió:* tiene el perfil "ideal": tasa baja ($+1.57$), contacto previo ($+0.87$), éxito previo ($+0.30$), jubilado de 60 años. Todo indica "Sí".
+- *Hipótesis:* **creemos que el éxito previo es justamente la razón del rechazo:** si el cliente ya abrió un depósito en la campaña anterior, probablemente su dinero sigue inmovilizado en ese producto y no tiene liquidez para uno nuevo. Además, 4 contactos en la campaña actual a un cliente con historial exitoso sugieren que ya había mostrado resistencia.
+- *Solución propuesta:* añadir la variable **"tiene un depósito vigente" y su fecha de vencimiento**, y crear la interacción **éxito previo × contactos en la campaña actual**, para distinguir al cliente receptivo del que ya dijo que no varias veces.
+
+**Error 5 (Falso Positivo, $P(\text{Sí}) = 0.854$). Jubilado de 63 años, casado, educación básica (4 años), contactado por celular en julio con Euribor de 0.90%, sin historial y en su primer contacto.**
+
+- *Por qué se confundió:* casi todo el empuje viene del **periodo**: Euribor ($+1.42$), `ipc` ($+0.37$) e `icc` ($+0.22$). La única señal personal relevante es la edad ($+0.23$). En el tramo más reciente del archivo, julio tiene una aceptación cercana al 49%, por lo que el modelo predice "Sí" a casi cualquier cliente de esa época.
+- *Hipótesis:* **creemos que el modelo confunde "momento favorable" con "cliente propenso".** No sabe nada de la situación financiera de este cliente; un jubilado con educación básica puede tener ingresos bajos y ninguna capacidad de ahorro, algo que el modelo no puede ver.
+- *Solución propuesta:* separar el efecto del periodo del efecto del cliente: (1) entrenar con **validación temporal** y reentrenar periódicamente, (2) reemplazar los indicadores macro absolutos por variables relativas al producto (por ejemplo, **diferencia entre la tasa ofrecida por el depósito y la Euribor**), y (3) añadir variables de capacidad de ahorro.
+
+## Prueba de estrés: ¿el modelo funciona en el futuro?
+
+La autopsia sugiere que el modelo depende del periodo. Para comprobarlo, aprovechamos que el archivo original está **ordenado cronológicamente** (de mayo de 2008 a noviembre de 2010): entrenamos XGBoost, con los mismos hiperparámetros, con el **primer 80% de los registros** y lo evaluamos en el **20% más reciente**, simulando su uso real (aprender del pasado, predecir el futuro).
+
+```{python}
+#| echo: false
+# Prueba de estrés temporal: el archivo está ordenado cronológicamente (mayo 2008 - nov 2010).
+# Se entrena con el primer 80% y se evalúa en el 20% más reciente con los mismos hiperparámetros.
+corte = int(len(X) * 0.8)
+modelo_temporal = clone(modelo_xgb).fit(X.iloc[:corte], y.iloc[:corte])
+y_futuro = y.iloc[corte:]
+pred_temporal = modelo_temporal.predict(X.iloc[corte:])
+prob_temporal = modelo_temporal.predict_proba(X.iloc[corte:])[:, 1]
+pred_aleatoria = predicciones["XGBoost"]
+
+validacion_temporal = pd.DataFrame({
+    "validacion": ["Aleatoria 80/20 (estratificada)", "Temporal (pasado -> futuro)"],
+    "tasa_real_entrenamiento_%": [100 * y_train.mean(), 100 * y.iloc[:corte].mean()],
+    "tasa_real_prueba_%": [100 * y_test.mean(), 100 * y_futuro.mean()],
+    "accuracy": [accuracy_score(y_test, pred_aleatoria), accuracy_score(y_futuro, pred_temporal)],
+    "precision": [precision_score(y_test, pred_aleatoria), precision_score(y_futuro, pred_temporal)],
+    "recall": [recall_score(y_test, pred_aleatoria), recall_score(y_futuro, pred_temporal)],
+    "F1": [f1_score(y_test, pred_aleatoria), f1_score(y_futuro, pred_temporal)],
+    "AUC_ROC": [roc_auc_score(y_test, prob_xgb), roc_auc_score(y_futuro, prob_temporal)],
+})
+```
+
+```{r}
+#| label: tbl-temporal
+#| tbl-cap: "XGBoost con validación aleatoria frente a validación temporal."
+py$validacion_temporal |>
+  kable(booktabs = TRUE, linesep = "", digits = 3, format.args = list(big.mark = ","),
+        col.names = c("Validación", "Tasa entren. (%)", "Tasa prueba (%)", "Accuracy", "Precision", "Recall", "F1", "AUC-ROC")) |>
+  kable_styling(latex_options = c("HOLD_position", "striped"), font_size = 8) |>
+  row_spec(0, bold = TRUE)
+```
+
+**El resultado es contundente (@tbl-temporal).** Con validación temporal, el F1 cae de **0.522 a 0.167**, el *recall* de 0.547 a **0.099** y el AUC-ROC de 0.812 a 0.613. La causa está en la tasa de aceptación: en el primer 80% del archivo es de **6.4%**, y en el 20% más reciente sube a **30.8%**. El periodo final (tasas muy bajas, después de la crisis) es un régimen que el modelo casi no vio al entrenar, y sigue prediciendo "No" como en 2008.
+
+Esto no invalida el modelo, pero **cambia cómo debe interpretarse su F1 de 0.52**: es el rendimiento esperado cuando las condiciones económicas del futuro son parecidas a las del entrenamiento. Ante un cambio de régimen económico, el modelo se degrada y debe reentrenarse. Es la limitación más importante descubierta en el proyecto, y no se habría detectado mirando solo las métricas de la validación aleatoria.
+
+\newpage
+
+# COMPARACIÓN DE MODELOS Y CONCLUSIONES
+
+## Comparación del rendimiento
+
+```{python}
+#| echo: false
+#| label: fig-comparacion
+#| fig-cap: "Comparación de métricas de los modelos en el conjunto de prueba."
+largo = metricas_test.melt(id_vars="modelo", var_name="metrica", value_name="valor")
+_ = plt.figure(figsize=(13, 5))
+ax = sns.barplot(data=largo, x="metrica", y="valor", hue="modelo", palette="Set2")
+for contenedor in ax.containers:
+    _ = ax.bar_label(contenedor, fmt="%.2f", fontsize=7, padding=1)
+_ = plt.title("Comparación de métricas en el conjunto de prueba")
+_ = plt.xlabel("")
+_ = plt.ylabel("Valor")
+_ = plt.ylim(0, 1.05)
+_ = plt.legend(loc="upper center", ncol=4, fontsize=9, bbox_to_anchor=(0.5, -0.08))
+guardar_figura("09_comparacion_metricas")
+```
+
+- **XGBoost** es el mejor modelo en F1 (0.522), *precision* (0.499), *recall* (0.547), AUC-ROC (0.812) y AUC-PR (0.477), y también fue el mejor en validación cruzada (0.500).
+- **El árbol de decisión** queda segundo y muy cerca (F1 = 0.514, AUC-ROC = 0.808): con solo 49 reglas logra el 98% del F1 de XGBoost.
+- **La regresión logística** queda tercera (F1 = 0.489, AUC-ROC = 0.795), pero la diferencia es de solo 0.03 en F1.
+- Las diferencias entre modelos son **pequeñas frente a la diferencia con la línea base** y frente a la caída de la validación temporal: el límite del rendimiento lo ponen los datos disponibles, no el algoritmo.
+
+```{python}
+#| echo: false
+# Coeficientes de la regresión logística (variables estandarizadas): los 10 mayores en valor absoluto
+modelo_lr = modelos["Regresión Logística"]
+coeficientes = pd.DataFrame({
+    "columna": [c.split("__", 1)[1] for c in modelo_lr.named_steps["prep"].get_feature_names_out()],
+    "coeficiente": modelo_lr.named_steps["modelo"].coef_[0],
+})
+coeficientes["odds_ratio"] = np.exp(coeficientes["coeficiente"])
+coeficientes_top = (coeficientes.reindex(coeficientes["coeficiente"].abs()
+                                         .sort_values(ascending=False).index)
+                    .head(10).reset_index(drop=True))
+```
+
+```{r}
+#| label: tbl-coeficientes
+#| tbl-cap: "Diez coeficientes más fuertes de la regresión logística y sus odds ratios."
+tabla(py$coeficientes_top, digitos = 3)
+```
+
+Los coeficientes de la logística (@tbl-coeficientes) cuentan la misma historia que XGBoost: haber sido **contactado antes multiplica los *odds* de suscribir por 2.74**; cada desviación estándar adicional de la Euribor (unos 1.7 puntos) los multiplica por **0.40**; marzo los multiplica por 2.48 y mayo por 0.46; el teléfono fijo, por 0.63. Un detalle revelador: `resultado_previo = failure` tiene un coeficiente **negativo** ($-0.54$), aunque en el EDA los clientes con un fracaso previo aceptaban más que los nunca contactados. No es una contradicción: el efecto positivo de "haber sido contactado" ya lo recoge `contacto_previo`, y el coeficiente de `failure` mide el ajuste *adicional*. Muestra cómo dos variables solapadas reparten el efecto y por qué los coeficientes deben leerse en conjunto.
+
+## Ventajas, limitaciones y comportamiento de cada modelo
+
+| Modelo | Ventajas observadas | Limitaciones observadas |
+|---|------|------|
+| **Regresión Logística** | Totalmente transparente (*odds ratios*), entrena en segundos, menor brecha entre entrenamiento y validación (0.003). Sus coeficientes confirman los hallazgos del EDA. | Es la de menor F1 y *recall*. No capta la "U" de la edad (`edad` entra como término lineal) ni interacciones como "tasa baja **y** contacto previo" sin crearlas a mano. Sensible a la colinealidad, que hubo que eliminar antes. |
+| **Árbol de Decisión** | Casi iguala a XGBoost con 49 reglas legibles; sus umbrales están en unidades reales y pueden entregarse al *call center*. Encontró solo los cortes clave (Euribor 1.24 y 3.19, más de 11.5 contactos). | Es inestable: pequeños cambios en los datos pueden cambiar sus primeros cortes. Sus probabilidades son escalonadas (una por hoja), por lo que ordena peor a los clientes dentro de una misma hoja. |
+| **XGBoost** | Mejor en todas las métricas de la clase positiva. Capta interacciones automáticamente, es robusto a los atípicos de `campana` y su regularización controló el sobreajuste. | Es una "caja negra" que requiere herramientas adicionales (contribuciones SHAP) para explicarse. Es el más costoso de ajustar (varias veces el tiempo de los otros dos, @tbl-ajuste) y sus probabilidades están descalibradas por `scale_pos_weight`. Comparte con los demás la dependencia del periodo. |
+
+: Ventajas y limitaciones de cada modelo. {#tbl-ventajas tbl-colwidths="[18, 41, 41]"}
+
+**Recomendación de modelo:** para producción se recomienda **XGBoost** como modelo de puntuación, acompañado del **árbol de decisión** como herramienta de comunicación: sus reglas coinciden con las razones de XGBoost y permiten explicar a los agentes y a los supervisores por qué se prioriza a un cliente.
+
+## Conclusiones generales
+
+### Impacto de los datos en el rendimiento
+
+- **Desbalance:** fue el factor que más condicionó el modelamiento. El *accuracy* resultó inútil como métrica (la línea base obtiene 88.73%) y los tres modelos necesitaron un peso de 3 : 1 para la clase positiva. Compensarlo por completo (7.88) empeoraba el F1, porque generaba demasiados falsos positivos.
+- **Calidad de los datos:** la decisión de la primera parte de conservar `desconocido` como categoría en `mora` y `educacion` fue útil: ambas variables conservan poder predictivo (IV de 0.13 y 0.05). El problema de calidad más importante no son los nulos, sino las **variables ambiguas**: `campana` no distingue entre rechazos y llamadas no contestadas (Error 1).
+- **Atípicos:** conservarlos fue correcto. Los valores extremos de `campana` contienen información real: en el Caso B, 18 contactos aportaron la contribución individual más grande de todo el análisis ($-2.22$). Los modelos basados en árboles son robustos a ellos por construcción.
+- **Dependencia del periodo:** los datos cubren un único ciclo económico (2008-2010) con un cambio de régimen muy marcado. Los indicadores macro y el mes permiten al modelo identificar el periodo, lo que eleva sus métricas en una validación aleatoria, pero lo vuelve frágil en el tiempo (F1 de 0.52 a 0.17 con validación temporal).
+
+### Recomendaciones de mejora de datos evidenciadas en la autopsia
+
+1. **Nuevas variables del cliente:** saldo y movimientos de cuenta, ingresos, productos vigentes (en especial, depósitos a plazo y su vencimiento). Son la información que faltó en los Errores 2, 4 y 5.
+2. **Mejor registro de la gestión:** el resultado de cada intento de contacto (no contesta, rellamada acordada, rechazo) en lugar de un contador único (Error 1), y la hora del contacto.
+3. **Ingeniería de *features*:** interacciones como éxito previo × contactos en la campaña actual (Error 4); tramos de `campana` con un límite operativo; variables relativas al producto, como la diferencia entre la tasa del depósito y la Euribor, en lugar de indicadores macro absolutos (Error 5); y eliminar el solapamiento entre `contacto_previo` y `resultado_previo`.
+4. **Validación y mantenimiento:** usar validación temporal para estimar el rendimiento real, monitorear la tasa de aceptación y la distribución de las variables, y **reentrenar el modelo** cuando cambie el contexto económico.
+5. **Decisión según costos:** fijar el umbral con el costo real de un falso positivo y de un falso negativo, calibrar las probabilidades y derivar la "zona gris" a un canal más barato o a revisión humana (Error 3).
+
+### Consideraciones éticas y de impacto real
+
+```{python}
+#| echo: false
+# Auditoría de equidad por grupo etario (sobre el conjunto de prueba)
+grupo_test = df.loc[X_test.index, "grupo_etario"]
+filas = []
+for grupo in grupo_test.cat.categories:
+    sub = resultados_test[grupo_test == grupo]
+    filas.append({
+        "grupo_etario": grupo, "registros": len(sub),
+        "tasa_real_%": 100 * sub["real"].mean(),
+        "pct_seleccionado": 100 * sub["prediccion"].mean(),
+        "precision": precision_score(sub["real"], sub["prediccion"], zero_division=0),
+        "recall": recall_score(sub["real"], sub["prediccion"], zero_division=0),
+    })
+equidad_edad = pd.DataFrame(filas)
+```
+
+```{r}
+#| label: tbl-equidad
+#| tbl-cap: "Auditoría del modelo por grupo etario: tasa real, porcentaje seleccionado para llamar, precision y recall."
+tabla(py$equidad_edad)
+```
+
+- **Concentración en grupos potencialmente vulnerables.** La auditoría por edad (@tbl-equidad) muestra que el modelo selecciona para llamar al **82.5% de los clientes de 65 años o más** y al **37.4% de los de 17 a 24 años**, frente al 7.8% de los de 35 a 44. Es coherente con los datos (sus tasas reales son 51.7% y 23.4%) y la *precision* es similar entre grupos (0.41 a 0.57), por lo que el modelo no está sesgado en el sentido estadístico. Pero en la práctica, **dirigiría la presión comercial hacia jubilados y estudiantes**, grupos con menor capacidad de negociación o menores ingresos. Implementarlo exige verificar la **idoneidad del producto** para cada cliente (por ejemplo, que el plazo del depósito no comprometa el dinero que un jubilado necesita para vivir), como exigen las normas de conducta de mercado (MiFID II en Europa; en Perú, el Reglamento de Gestión de Conducta de Mercado de la SBS).
+- **Uso de atributos personales.** La edad, el estado civil y el tipo de empleo son características personales. Usarlas para **priorizar llamadas** de un producto de ahorro es razonable, pero el mismo modelo no debería reutilizarse para **negar** productos o condiciones, porque entonces la edad funcionaría como un criterio de exclusión.
+- **Insistencia y privacidad.** El modelo puede reducir las llamadas en casi un 88%, lo que disminuye la molestia a los clientes; pero también podría usarse para insistir más a quienes tienen un puntaje alto. Recomendamos mantener un **límite de contactos por cliente** (el EDA mostró que más de 3 contactos reducen la aceptación) y respetar el consentimiento y la protección de datos personales (RGPD en Europa; Ley N.° 29733 en Perú).
+- **Riesgo de degradación silenciosa.** Como mostró la prueba temporal, el modelo puede dejar de funcionar si cambia el contexto económico sin que nadie lo note. Debe operar con **supervisión humana, monitoreo periódico y reentrenamiento**, y sus decisiones deben poder explicarse al cliente y al regulador (para eso sirven las contribuciones SHAP y el árbol).
+- **El modelo es una herramienta de priorización, no de causalidad:** que la Euribor baja se asocie con más suscripciones no significa que el banco pueda provocar suscripciones; solo puede aprovechar mejor los momentos y los clientes favorables.
+
+### Cierre
+
+El proyecto cumplió su objetivo: con información disponible **antes** de la llamada, XGBoost identifica un grupo del 12% de la base que concentra el 55% de las suscripciones, con una conversión 4.4 veces mayor que la campaña masiva. La autopsia mostró, sin embargo, que buena parte de ese rendimiento proviene de reconocer el **periodo económico** y no el **perfil del cliente**, y que el modelo se degrada fuertemente ante un cambio de régimen. Por ello, la mejora más valiosa no es probar un algoritmo más complejo, sino **recolectar mejores datos del cliente y de la gestión de las llamadas** y validar el modelo en el tiempo antes de usarlo en una campaña real.
 
 \newpage
