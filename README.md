@@ -1,4 +1,42 @@
-# Proyecto - Intro a DS - Parte 1
+# Proyecto - Introducción a Ciencia de Datos e IA (UTEC 2026-2)
+
+Análisis y predicción de la aceptación de depósitos a plazo en campañas de telemarketing bancario (dataset *Bank Marketing*, UCI).
+
+- **Parte 1:** exploración, preprocesamiento y análisis exploratorio de datos (EDA).
+- **Parte 2:** modelamiento (árbol de decisión y regresión logística), evaluación, explicabilidad y autopsia del modelo.
+
+## Entregables
+
+| Entregable | Archivo | Fuente |
+|---|---|---|
+| Notebook (código y análisis) | `code/proyecto_analisis_bancario.ipynb` | — |
+| Reporte final (PDF) | `R_project/reporte_final.pdf` | `R_project/reporte_final.qmd` |
+| Presentación de la Parte 2 (HTML) | `R_project/presentacion_final_p2.html` | `R_project/presentacion_final_p2.qmd` |
+
+## Estructura del proyecto
+
+```
+code/                    Notebook del proyecto
+bank-additional/         Dataset original y dataset preprocesado
+  bank-additional-full.csv
+  bank_calls_description_processed.csv   (lo genera el notebook al final de la Parte 1)
+output_images/           Figuras generadas por el notebook (Parte 2 con prefijo p2_)
+R_project/               Reporte y presentación en Quarto
+  reporte_final.qmd / .pdf
+  presentacion_final_p2.qmd / .html
+  figuras_p2/            Figuras de la Parte 2 generadas al compilar el reporte (las usa la presentación)
+  references.bib, _extensions/   Bibliografía y plantilla del reporte
+```
+
+## Cómo reproducir
+
+1. **Notebook:** abrir `code/proyecto_analisis_bancario.ipynb` y ejecutar todas las celdas. Lee los datos de `../bank-additional/` y guarda las figuras en `../output_images/`.
+2. **Reporte:** desde `R_project/`, ejecutar `quarto render reporte_final.qmd`. Requiere R con `reticulate` y el entorno de Python `r-reticulate` (numpy, pandas, seaborn, matplotlib, scikit-learn). Genera `reporte_final.pdf` y las figuras de `figuras_p2/`.
+3. **Presentación:** compilar después del reporte, desde `R_project/`, con `quarto render presentacion_final_p2.qmd`. Genera `presentacion_final_p2.html` con las imágenes incluidas.
+
+---
+
+# Dataset: Bank Marketing
 
 Citation Request:
   This dataset is publicly available for research. The details are described in [Moro et al., 2014]. 
