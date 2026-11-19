@@ -1829,7 +1829,7 @@ Se aplica una búsqueda en grilla escrita como bucles simples. Cada combinación
 
 ```{python}
 #| echo: false
-  #| include: false
+#| include: false
 #| warning: false
 
 def calcular_metricas(y_real, y_pred):
@@ -2127,7 +2127,7 @@ importancia_euribor = 100 * importancia_variables["euribor3m"]
 - **Ambos modelos coinciden en las señales principales** (@fig-importancia-variables): la tasa Euribor, el historial de contacto (`contacto_previo`, `resultado_previo`) y el mes. Es el mismo orden que mostró la medición de la fuerza predictora y el EDA de la primera parte.
 - **Regresión logística:**
   - Empujan hacia "Sí": haber sido contactado antes (+1.23), marzo (+1.08), el celular, el éxito previo, ser jubilado o estudiante, y octubre y diciembre.
-  - Empujan hacia "No": una Euribor alta ($-0.89$ por cada desviación estándar), mayo ($-0.85$), un fracaso previo y los meses de verano.
+  - Empujan hacia "No": una Euribor alta ($-0.89$ por cada desviación estándar), mayo ($-0.85$), un fracaso previo y los meses de agosto, septiembre, abril y noviembre.
   - El coeficiente de `educacion=illiterate` (+0.39) se apoya en solo 18 clientes y no debe interpretarse como un efecto real.
 - **Árbol de decisión:** concentra el **`r round(py$importancia_euribor)`% de la importancia en `euribor3m`**, seguido de `mes` (7%) y `edad` (3%).
   - Esta concentración tiene una explicación: la Euribor toma pocos valores distintos y cada uno corresponde a **semanas concretas** de la campaña. El árbol la usa como un **calendario**: con cortes casi idénticos, como 4.857 y 4.860, aísla periodos específicos y no un efecto económico gradual.
@@ -2153,8 +2153,8 @@ guardar_figura("p2_07_arbol_decision")
 **Lectura del árbol**
 
 - **Primera pregunta: ¿la Euribor es $\leq$ 1.265%?** Separa el periodo de tasas bajas (3,562 clientes, rama izquierda azul, mayoría ponderada "Sí") del de tasas medias y altas (21,143 clientes, rama derecha naranja, mayoría "No").
-- **Rama de tasas bajas:** la siguiente pregunta relevante es si el cliente tuvo **contacto previo** y, luego, el canal (`celular`). Es la regla "tasas bajas + historial + celular $\rightarrow$ llamar".
-- **Rama de tasas altas:** la pregunta clave es si el contacto ocurrió en **mayo**, el mes de menor aceptación según la primera parte. Después aparecen la cantidad de llamadas (`campana` $\leq$ 11.5) y cortes muy finos de la Euribor ($\leq$ 4.857) que identifican semanas específicas.
+- **Rama de tasas bajas:** tras un segundo corte de la Euribor ($\leq$ 1.092), la pregunta es si el cliente tuvo **contacto previo** y, para quienes no lo tuvieron, el canal (`celular`). Es la regla "tasas bajas + historial + celular $\rightarrow$ llamar".
+- **Rama de tasas medias y altas:** tras un segundo corte de la Euribor ($\leq$ 2.57), la pregunta clave es si el contacto ocurrió en **mayo**, el mes de menor aceptación según la primera parte. Después aparecen la cantidad de llamadas (`campana` $\leq$ 11.5) y cortes muy finos de la Euribor ($\leq$ 4.857) que identifican semanas específicas.
 - El árbol traduce a reglas los tres hallazgos principales de la primera parte: **contexto de tasas, historial del cliente y estacionalidad**.
 
 ## Extracción de casos
@@ -2479,12 +2479,19 @@ Se seleccionan **cinco errores** del DataFrame de errores, elegidos para cubrir 
 - **Errores 1 a 3:** los tres **falsos positivos** con mayor probabilidad (el modelo estaba muy seguro de que aceptarían y no lo hicieron).
 - **Errores 4 y 5:** los dos **falsos negativos** con menor probabilidad (el modelo los descartó casi por completo y sí aceptaron).
 
+Como varios errores caen en la misma hoja y tienen la misma probabilidad en el árbol, los empates se resuelven con la probabilidad de la regresión logística (la más alta para los falsos positivos y la más baja para los falsos negativos).
+
 ```{python}
 #| echo: false
-casos_error_idx = (list(errores[errores["tipo_error"].str.startswith("Falso positivo")]
-                        .sort_values("prob_si", ascending=False).index[:3]) +
-                   list(errores[errores["tipo_error"].str.startswith("Falso negativo")]
-                        .sort_values("prob_si").index[:2]))
+# Varios errores comparten la misma P(Sí) del árbol (caen en la misma hoja). Se desempata con la
+# probabilidad de la regresión logística, como en la extracción de casos, para que la selección no
+# dependa del orden interno de numpy al ordenar valores repetidos.
+orden_errores = errores.assign(prob_logistica=pd.Series(probabilidades_test["Regresión logística"], index=X_test.index))
+falsos_positivos = (orden_errores[orden_errores["tipo_error"].str.startswith("Falso positivo")]
+                    .sort_values(["prob_si", "prob_logistica"], ascending=False))
+falsos_negativos = (orden_errores[orden_errores["tipo_error"].str.startswith("Falso negativo")]
+                    .sort_values(["prob_si", "prob_logistica"]))
+casos_error_idx = list(falsos_positivos.index[:3]) + list(falsos_negativos.index[:2])
 casos_error = {f"Error {i}": indice for i, indice in enumerate(casos_error_idx, start=1)}
 
 tabla_errores = errores.loc[casos_error_idx].copy()
@@ -2557,23 +2564,23 @@ tabla(py$aportes_errores_fn, digitos = 3)
 
 - **Los tres falsos positivos llegan a la misma hoja** (hoja 29: 101 clientes de entrenamiento, 78.2% de aceptación) por el mismo camino (@tbl-camino-errores): Euribor $\leq$ 1.092, contacto previo, IPC > 92.68, no fue lunes, edad > 35.5 y más de una llamada en la campaña. Ambos modelos les asignan probabilidades mayores a 0.96 (@tbl-prob-errores).
 - **Los dos falsos negativos llegan a la hoja 117** (@tbl-camino-errores-fn), la misma del Caso C: mayo, Euribor entre 4.857 y 4.860 y más de 4 llamadas, una hoja donde ninguno de los 128 clientes de entrenamiento aceptó. Ambos modelos les asignan probabilidades bajas (0.000 en el árbol y 0.119 a 0.147 en la logística).
-- La regresión logística detecta en dos de los falsos positivos señales que el árbol no usa en esa rama: el **fracaso previo** del error 1 ($-0.41$) y el **desempleo** del error 2 ($-0.19$) (@tbl-aportes-errores). Aun así, la Euribor baja y el contacto previo pesan más y la predicción sigue siendo "Sí".
+- Los tres falsos positivos son **jubilados**. La regresión logística detecta en el error 2 una señal que el árbol no usa en esa rama: el **fracaso previo** ($-0.41$, @tbl-aportes-errores). Aun así, la Euribor baja, el contacto previo y marzo pesan más y la predicción sigue siendo "Sí".
 
 ## Hipótesis y solución propuesta
 
 | Caso | Qué pasó | Hipótesis | Solución propuesta |
 |---|---|---|---|
-| **Error 1** (FP, P = 0.97) | Jubilado de 56 años con 2 contactos previos y resultado previo **fracaso**, celular, marzo, Euribor 0.64%. Cae en la hoja 29, donde aceptó el 78.2% de 101 clientes. | En esa rama el árbol solo pregunta si hubo contacto previo, no cuál fue su resultado: trata igual a quien rechazó la oferta anterior que a quien la aceptó. La logística sí penalizó el fracaso ($-0.41$), pero la Euribor baja y marzo pesaron más. | Combinar `contacto_previo` y `resultado_previo` en una sola variable con tres niveles (sin historial, fracaso, éxito), para que el árbol distinga el resultado con una sola pregunta. |
-| **Error 2** (FP, P = 0.97) | Desempleado de 37 años, soltero, con éxito previo, celular, junio, Euribor 0.74%. Misma hoja 29. | Sin ingresos, probablemente no tiene liquidez libre para inmovilizar en un depósito. La logística le restó por el desempleo ($-0.19$), pero el árbol no pregunta por `empleo` en esa rama. | Recolectar los **ingresos** y el **saldo disponible** del cliente, que miden directamente su capacidad de ahorro. |
-| **Error 3** (FP, P = 0.97) | Jubilado de 60 años con éxito previo, celular, julio, Euribor 0.90%, con **préstamo hipotecario y préstamo personal** y 4 llamadas en esta campaña. Misma hoja 29. | Con deudas activas probablemente no tiene liquidez para un depósito, y el modelo casi no considera las deudas (`vivienda` y `prestamo` tienen coeficientes cercanos a 0). El éxito previo puede indicar que ya tiene un depósito vigente, y las 4 llamadas sugieren que ya había mostrado resistencia. | Agregar el **nivel de endeudamiento** y si el cliente **tiene un depósito vigente** con su fecha de vencimiento. Aplicar una regla de negocio que limite las llamadas (por ejemplo, a 3), como recomendó la primera parte. |
-| **Error 4** (FN, P = 0.00) | Empleado de servicios de 52 años, **teléfono fijo**, mayo, Euribor 4.86%, 5 llamadas, sin historial. Cae en la hoja 117, donde **ninguno** de 128 clientes aceptó. | El árbol aprendió una regla de calendario: la semana de mayo con Euribor de 4.858 (cortes 4.857 < x $\leq$ 4.860) en la que nadie aceptó. El cliente es la excepción y su motivo es individual. La probabilidad de 0.000 refleja un **exceso de confianza** basado en 128 casos. | Reemplazar el valor exacto de `euribor3m` por un **nivel de tasas** (baja o alta) para que el árbol no memorice semanas, y validar el modelo **en el tiempo** (entrenar con meses anteriores y probar con los posteriores). |
-| **Error 5** (FN, P = 0.00) | Empleado de servicios de 52 años, `mora` **desconocida**, teléfono fijo, mayo, Euribor 4.86%, 6 llamadas. Misma hoja 117. | Mismo mecanismo que el error 4. Además, la `mora` desconocida (que en la primera parte se asoció con una baja aceptación, 5.15%) y el canal fijo empujan hacia "No". El cliente aceptó **a pesar** de la insistencia: es una oportunidad que el modelo descartaría. | Recolectar el **canal preferido** de contacto y completar el dato de `mora`. Agrupar los meses en temporadas, para no depender de periodos con pocos casos. |
+| **Error 1** (FP, P = 0.97) | Jubilado de 85 años, soltero, con 2 contactos previos y resultado previo **éxito**, celular, marzo, Euribor 0.65%, **7 llamadas** en esta campaña. Cae en la hoja 29, donde aceptó el 78.2% de 101 clientes. | El éxito previo indica que ya contrató un depósito antes, y es posible que siga vigente: no tendría fondos adicionales. Las 7 llamadas sugieren que ya había rechazado varias veces, pero el árbol no vuelve a preguntar por `campana` después del corte `campana` > 1.5, y en la logística el aporte de la insistencia queda por debajo del de la Euribor, el contacto previo y marzo. | Agregar si el cliente **tiene un depósito vigente** y su fecha de vencimiento. Aplicar una regla de negocio que limite las llamadas (por ejemplo, a 3), como recomendó la primera parte. |
+| **Error 2** (FP, P = 0.97) | Jubilado de 56 años con 2 contactos previos y resultado previo **fracaso**, celular, marzo, Euribor 0.64%. Misma hoja 29. | En esa rama el árbol solo pregunta si hubo contacto previo, no cuál fue su resultado: trata igual a quien rechazó la oferta anterior que a quien la aceptó. La logística sí penalizó el fracaso ($-0.41$), pero la Euribor baja y marzo pesaron más. | Combinar `contacto_previo` y `resultado_previo` en una sola variable con tres niveles (sin historial, fracaso, éxito), para que el árbol distinga el resultado con una sola pregunta. |
+| **Error 3** (FP, P = 0.97) | Jubilado de 60 años con éxito previo, celular, julio, Euribor 0.90%, con **préstamo hipotecario y préstamo personal** y 4 llamadas en esta campaña. Misma hoja 29. | Con deudas activas probablemente no tiene liquidez para un depósito, y el modelo casi no considera las deudas (`vivienda` y `prestamo` tienen coeficientes cercanos a 0 en la logística y el árbol no pregunta por ellas en esa rama). | Recolectar el **nivel de endeudamiento** y el **saldo disponible** del cliente, que miden directamente su capacidad de ahorro. |
+| **Error 4** (FN, P = 0.00) | Empleado de servicios de 52 años, `mora` **desconocida**, **teléfono fijo**, mayo, Euribor 4.86%, 6 llamadas, sin historial. Cae en la hoja 117, donde **ninguno** de 128 clientes aceptó. | El árbol aprendió una regla de calendario: la semana de mayo con Euribor de 4.858 (cortes 4.857 < x $\leq$ 4.860) en la que nadie aceptó. El cliente es la excepción y su motivo es individual. La probabilidad de 0.000 refleja un **exceso de confianza** basado en 128 casos. En la logística, además de mayo y la Euribor alta, resta la `mora` desconocida (coeficiente $-0.11$; en la primera parte se asoció con una aceptación de 5.15%). | Reemplazar el valor exacto de `euribor3m` por un **nivel de tasas** (baja o alta) para que el árbol no memorice semanas, y validar el modelo **en el tiempo** (entrenar con meses anteriores y probar con los posteriores). Completar el dato de `mora`. |
+| **Error 5** (FN, P = 0.00) | Empleado de servicios de 52 años, divorciado, teléfono fijo, mayo, Euribor 4.86%, 5 llamadas, sin historial. Misma hoja 117. | Mismo mecanismo que el error 4. Además, por el teléfono fijo no recibe el aporte positivo del celular (+0.39 en la logística). El cliente aceptó **a pesar** de la insistencia: es una oportunidad que el modelo descartaría. | Recolectar el **canal preferido** de contacto. Agrupar los meses en temporadas, para no depender de periodos con pocos casos. |
 
 : Hipótesis técnica y solución propuesta para cada uno de los cinco errores. {#tbl-hipotesis tbl-colwidths="[11, 29, 33, 27]"}
 
 **Patrón común**
 
-- Los tres falsos positivos comparten **la misma hoja** (clientes mayores de 35 años con contacto previo y tasas bajas). El modelo no tiene información sobre su **capacidad actual de ahorro**.
+- Los tres falsos positivos comparten **la misma hoja** (clientes mayores de 35 años con contacto previo y tasas bajas) y los tres son jubilados. El modelo no tiene información sobre su **capacidad actual de ahorro** ni sobre si ya tienen un depósito.
 - Los dos falsos negativos comparten **otra hoja** (una semana de mayo con tasas altas). El modelo **memorizó el periodo** en lugar de aprender el comportamiento del cliente.
 
 \newpage
@@ -2611,7 +2618,7 @@ La @tbl-resumen-final reúne los resultados de ambos modelos. El árbol de decis
 | | Árbol de decisión | Regresión logística |
 |---|---|---|
 | **Rendimiento** | F1 0.51, *precision* 0.45, *recall* 0.60. Llama a 1,232 clientes. | F1 0.50, *precision* 0.42, *recall* 0.61. Llama a 1,340 clientes. |
-| **Ventajas** | Reglas legibles para el área comercial ("si las tasas son bajas y el cliente tuvo contacto previo, llamar"). Capta cortes y combinaciones sin transformar los datos. No necesita normalización y no le afectan los atípicos de `campana`. | Muy estable: el F1 casi no cambia con `C`. Un solo coeficiente por variable resume su efecto. Usa todas las variables a la vez y detectó señales que el árbol ignoró (el fracaso previo en el error 1 y el desempleo en el error 2). |
+| **Ventajas** | Reglas legibles para el área comercial ("si las tasas son bajas y el cliente tuvo contacto previo, llamar"). Capta cortes y combinaciones sin transformar los datos. No necesita normalización y no le afectan los atípicos de `campana`. | Muy estable: el F1 casi no cambia con `C`. Un solo coeficiente por variable resume su efecto. Usa todas las variables a la vez y detectó señales que el árbol ignoró (el fracaso previo en el error 2). |
 | **Limitaciones** | Concentra el 82% de su importancia en `euribor3m` y la usa como calendario. Produce probabilidades extremas (0.00 o 0.97) en hojas con pocos clientes. Con más profundidad sobreajusta (se observó con profundidad 9). | Supone efectos aditivos y lineales: no capta la forma de "U" de `edad` ni las combinaciones (tasa baja **y** historial). Necesita estandarizar, y sus coeficientes se leen en unidades de desviación estándar. |
 | **Comportamiento** | Tiende a recomendar a casi todos los contactados en periodos de tasas bajas. | Más gradual: reparte las probabilidades y comete más falsos positivos (777 frente a 679). |
 
@@ -2633,15 +2640,15 @@ La @tbl-resumen-final reúne los resultados de ambos modelos. El árbol de decis
 
 ### Recomendaciones de mejora de los datos
 
-1. **Nuevas variables financieras del cliente:** saldo disponible, ingresos, endeudamiento y si tiene un depósito vigente con su fecha de vencimiento (errores 2, 3, 4 y 5).
-2. **Transformaciones simples:** convertir `euribor3m` en un nivel de tasas (baja o alta) y agrupar los meses en temporadas, para que el árbol aprenda patrones generales y no semanas concretas (errores 4 y 5); y combinar `contacto_previo` y `resultado_previo` en una sola variable (error 1).
+1. **Nuevas variables financieras del cliente:** saldo disponible, ingresos, endeudamiento y si tiene un depósito vigente con su fecha de vencimiento (errores 1, 3, 4 y 5).
+2. **Transformaciones simples:** convertir `euribor3m` en un nivel de tasas (baja o alta) y agrupar los meses en temporadas, para que el árbol aprenda patrones generales y no semanas concretas (errores 4 y 5); y combinar `contacto_previo` y `resultado_previo` en una sola variable (error 2).
 3. **Validación temporal:** entrenar con los primeros meses y evaluar con los siguientes, para medir si el modelo mantiene su rendimiento ante un cambio de contexto.
-4. **Regla de negocio complementaria:** limitar a 3 el número de llamadas por cliente en una campaña, independientemente del modelo.
+4. **Regla de negocio complementaria:** limitar a 3 el número de llamadas por cliente en una campaña, independientemente del modelo (error 1).
 
 ## Consideraciones éticas y de impacto real
 
 - **Privacidad:** el dataset no tiene identificadores directos (PII como nombre o DNI), pero sí datos personales (edad, empleo, estado civil, situación de crédito). Como los datos provienen de un banco portugués, aplica el **RGPD**, y en una implementación en Perú, la **Ley N.º 29733 de Protección de Datos Personales**. El uso para campañas comerciales requiere **consentimiento** y respetar el derecho del cliente a no ser contactado. Quitar el nombre no basta para anonimizar, por lo que estos datos no deben cruzarse con otras fuentes.
-- **Personas vulnerables:** el modelo prioriza a jubilados y adultos mayores (los errores 1 y 3 son jubilados de 56 y 60 años). Concentrar la presión comercial en ellos puede ser abusivo. Toda oferta debe verificar que el producto sea **adecuado** para el cliente; no basta con que la probabilidad de aceptar sea alta.
+- **Personas vulnerables:** el modelo prioriza a jubilados y adultos mayores (los tres falsos positivos analizados son jubilados de 56, 60 y 85 años). Concentrar la presión comercial en ellos puede ser abusivo. Toda oferta debe verificar que el producto sea **adecuado** para el cliente; no basta con que la probabilidad de aceptar sea alta.
 - **Exclusión:** los grupos con baja probabilidad (obreros, servicios, contactados por teléfono fijo) dejarían de recibir la oferta. Usar el modelo para **ordenar** a quién llamar primero es razonable; usarlo para **negar** el acceso a un producto de ahorro no lo es.
 - **Errores con consecuencias distintas:** un falso positivo es una llamada que molesta y un falso negativo, un depósito perdido. Con el umbral elegido el modelo **no encuentra al 40%** de los interesados. El banco debe decidir conscientemente ese equilibrio, por ejemplo bajando el umbral si prioriza la captación.
 - **Riesgo de degradación silenciosa:** como el modelo depende del contexto de tasas de 2008 a 2010, puede dejar de funcionar si la economía cambia sin que nadie lo note. Se recomienda **monitorear** su *precision* y *recall* en cada campaña, y que la decisión final siempre tenga **supervisión humana**.

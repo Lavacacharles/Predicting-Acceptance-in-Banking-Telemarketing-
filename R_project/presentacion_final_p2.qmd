@@ -277,7 +277,7 @@ Tiempo estimado: 50 s.
 
 :::: {.columns}
 ::: {.column width="50%"}
-**Error 1: falso positivo (P(Sí) = 0.97)**
+**Error 2: falso positivo (P(Sí) = 0.97)**
 
 Jubilado de 56 años, contacto previo con resultado **fracaso**, celular, marzo, Euribor 0.644%. **No aceptó.**
 
@@ -286,7 +286,7 @@ Jubilado de 56 años, contacto previo con resultado **fracaso**, celular, marzo,
 :::
 
 ::: {.column width="50%"}
-**Error 4: falso negativo (P(Sí) = 0.00)**
+**Error 5: falso negativo (P(Sí) = 0.00)**
 
 Empleado de servicios de 52 años, teléfono fijo, mayo, Euribor 4.858%, 5 llamadas. **Aceptó.**
 

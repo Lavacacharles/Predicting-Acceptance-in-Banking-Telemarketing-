@@ -1454,14 +1454,14 @@ display:block!important;
 <h2>Dos casos fallidos</h2>
 <div class="columns">
 <div class="column" style="width:50%;">
-<p><strong>Error 1: falso positivo (P(Sí) = 0.97)</strong></p>
+<p><strong>Error 2: falso positivo (P(Sí) = 0.97)</strong></p>
 <p>Jubilado de 56 años, contacto previo con resultado <strong>fracaso</strong>, celular, marzo, Euribor 0.644%. <strong>No aceptó.</strong></p>
 <ul>
 <li><strong>Hipótesis:</strong> en esa rama el árbol solo pregunta si hubo contacto previo, no cuál fue su resultado.</li>
 <li><strong>Solución:</strong> combinar <code>contacto_previo</code> y <code>resultado_previo</code> en una sola variable (sin historial, fracaso, éxito).</li>
 </ul>
 </div><div class="column" style="width:50%;">
-<p><strong>Error 4: falso negativo (P(Sí) = 0.00)</strong></p>
+<p><strong>Error 5: falso negativo (P(Sí) = 0.00)</strong></p>
 <p>Empleado de servicios de 52 años, teléfono fijo, mayo, Euribor 4.858%, 5 llamadas. <strong>Aceptó.</strong></p>
 <ul>
 <li><strong>Hipótesis:</strong> cae en una hoja que corresponde a una semana de mayo en la que ninguno de 128 clientes aceptó; su motivo no está en los datos.</li>

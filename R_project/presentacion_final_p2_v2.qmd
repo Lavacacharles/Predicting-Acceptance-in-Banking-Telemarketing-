@@ -1,0 +1,425 @@
+---
+title: "PROYECTO PARTE II"
+subtitle: "Modelamiento, evaluación y auditoría: predicción de la aceptación de depósitos a plazo"
+author: "Juan Aquino, Angel Mora, Leonardo Cueva, Douglas Gonzales y Adrian Varillas"
+institute: "Introducción a Ciencia de Datos e Inteligencia Artificial · Docente: Walter Quispe Vargas · Ciclo 2026-2"
+lang: es
+format:
+  revealjs:
+    embed-resources: true
+    slide-number: true
+    transition: fade
+    width: 1280
+    height: 720
+    margin: 0.06
+    logo: _extensions/numbats/report/logo.png
+    include-in-header:
+      text: |
+        <style>
+          :root { --utec: #00BEDF; --utec-oscuro: #00849B; }
+          .reveal h1, .reveal h2, .reveal h3 { color: var(--utec-oscuro); font-weight: 700; }
+          .reveal .title { color: var(--utec-oscuro); }
+          .reveal .subtitle { color: #444; font-size: 0.9em; }
+          .reveal { font-size: 26px; }
+          .reveal table { font-size: 0.8em; }
+          .reveal table th { background: var(--utec); color: white; }
+          .reveal .progress { color: var(--utec); }
+          .nota { font-size: 0.75em; color: #555; }
+          .chico { font-size: 0.8em; }
+          .destacado { background: #E6F8FB; border-left: 6px solid var(--utec); padding: 0.5em 0.8em; }
+          .alerta { background: #FDECEA; border-left: 6px solid #D9534F; padding: 0.5em 0.8em; }
+          .cifra { font-size: 1.5em; font-weight: 700; color: var(--utec-oscuro); }
+          .tarjeta { border: 2px solid var(--utec); border-radius: 6px; padding: 0.4em 0.8em; min-height: 4.4em; }
+          .reveal .footer { font-size: 15px; color: #999; }
+          .reveal .footer strong { color: var(--utec-oscuro); }
+          .reveal section.center h2 { text-align: center; }
+        </style>
+execute:
+  echo: false
+---
+
+## Contexto
+
+::: footer
+**Contexto** · Preparación · Modelado · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="50%"}
+**Problema**
+
+- Las campañas de telemarketing bancario contactan de forma masiva a toda la base de clientes para captar depósitos a plazo.
+- La mayoría de los contactados no suscribe: aumenta el costo de la campaña y se generan llamadas innecesarias.
+:::
+
+::: {.column width="50%"}
+**Dataset**
+
+- *Bank Marketing* (UCI Machine Learning Repository), banco portugués.
+- 41,188 registros y 21 columnas, de mayo de 2008 a noviembre de 2010.
+- Variable objetivo: suscribió (Sí / No).
+
+::: {.destacado}
+**Objetivo:** estimar, antes de llamar, si un cliente aceptará el depósito, para priorizar la lista de contactos.
+:::
+:::
+::::
+
+::: {.notes}
+Tiempo estimado: 40 s.
+:::
+
+## Resumen de la Parte I
+
+::: footer
+**Contexto** · Preparación · Modelado · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="45%"}
+**Pasos realizados**
+
+1. **Limpieza:** 12 duplicados eliminados (41,176 registros); valores desconocidos tratados como una categoría propia o imputados con la moda; el código 999 de días desde el último contacto separado como "sin contacto".
+2. **Nuevas variables:** 5 variables derivadas con reglas simples.
+3. **Análisis exploratorio** univariado y multivariado.
+:::
+
+::: {.column width="55%"}
+**Hallazgos que se usan en la Parte II**
+
+1. **Desbalance:** solo el [11.27%]{.cifra} suscribe. Se requiere ponderar las clases y evaluar con F1.
+2. **Historial y tasas de interés:** aceptación de [63.83%]{.cifra} con contacto previo frente a 9.26% sin él, y de [24.46%]{.cifra} con Euribor menor a 3% frente a 4.84%.
+3. **Duración de la llamada:** está muy asociada a la aceptación, pero solo se conoce después de la llamada. Se excluye del modelo.
+:::
+::::
+
+::: {.notes}
+Tiempo estimado: 50 s. En el dataset los valores desconocidos aparecen como `unknown` y se recodificaron como `desconocido`.
+:::
+
+## Preparación del dataset
+
+::: footer
+Contexto · **Preparación** · Modelado · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="50%"}
+**Selección de variables**
+
+- Excluidas: duración de la llamada y sus derivadas (fuga de información), tasa de variación del empleo y número de empleados (colineales con la Euribor, r de 0.91 a 0.97) y variables duplicadas.
+- Se conservan **17 variables** conocidas antes de la llamada.
+
+**Codificación y estandarización**
+
+- Binarias a 1/0 y una columna 0/1 por categoría en el resto: **53 columnas**.
+- Estandarización de las 6 numéricas, solo para la regresión logística.
+:::
+
+::: {.column width="50%"}
+**División estratificada 60 / 20 / 20**
+
+| Conjunto | Registros | Aceptan | Tasa |
+|---|---:|---:|---:|
+| Entrenamiento | 24,705 | 2,783 | 11.26% |
+| Validación | 8,235 | 928 | 11.27% |
+| Prueba | 8,236 | 928 | 11.27% |
+
+- **Por qué no 80/20:** se necesita un conjunto de **validación** para elegir hiperparámetros y umbral sin mirar la prueba.
+- **Prueba (20%):** 928 clientes que aceptan, suficientes para medir precision y recall. Se usa una sola vez, al final.
+- La estratificación mantiene el 11.27% en los tres conjuntos.
+:::
+::::
+
+::: {.notes}
+Tiempo estimado: 60 s.
+:::
+
+## Fuerza predictora de las variables
+
+::: footer
+Contexto · **Preparación** · Modelado · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+![](artifacts/figuras_v3/v3_fuerza_predictora.png){height="370" fig-align="center"}
+
+- **Historial:** resultado y contacto previo separan más de 54 puntos porcentuales la aceptación. **Momento:** el mes separa 44 pp y la Euribor es la numérica más fuerte (r = −0.31).
+- Estado civil, día, vivienda y préstamo separan menos de 4 pp. Se mantienen las 17 variables: el árbol elige sus preguntas y la regularización reduce los coeficientes débiles.
+
+::: {.notes}
+Tiempo estimado: 45 s. Categóricas: diferencia entre la categoría con mayor y menor tasa de aceptación (solo categorías con al menos 100 clientes). Numéricas: correlación de Pearson con la variable objetivo 1/0. Edad tiene r ≈ 0.03 porque su relación es en forma de U, que Pearson no detecta.
+:::
+
+## Modelos y métricas
+
+::: footer
+Contexto · Preparación · **Modelado** · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="50%"}
+::: {.tarjeta}
+**Árbol de decisión:** los patrones de la Parte I son cortes (tasa alta o baja, con o sin historial). Sus reglas se pueden leer y explicar.
+:::
+:::
+
+::: {.column width="50%"}
+::: {.tarjeta}
+**Regresión logística:** modelo lineal simple e interpretable. Sirve como punto de comparación.
+:::
+:::
+::::
+
+- **Desbalance:** las clases se ponderan; cada cliente que acepta pesa unas 7.9 veces más (88.7 / 11.3).
+- **Métrica de selección: F1 de la clase "Sí"**, que combina:
+  - **Precision:** de cada 100 clientes que el modelo recomienda llamar, cuántos aceptan.
+  - **Recall:** de cada 100 clientes que habrían aceptado, cuántos encuentra el modelo.
+- La *accuracy* no sirve para elegir: responder siempre "No" daría 88.7%.
+
+::: {.notes}
+Tiempo estimado: 50 s. Ponderación en scikit-learn: `class_weight="balanced"`.
+:::
+
+## Ajuste de hiperparámetros
+
+::: footer
+Contexto · Preparación · **Modelado** · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+![](artifacts/figuras_v3/v3_hiperparametros.png){height="340" fig-align="center"}
+
+- **Búsqueda en grilla:** 16 combinaciones, evaluadas con el F1 en validación. Logística: C = 10 (F1 0.454); el F1 casi no cambia con C. Árbol: profundidad 7 y mínimo 100 clientes por hoja (F1 0.486).
+- **Sobreajuste:** con profundidad 9 el F1 baja a 0.468; las reglas describen al entrenamiento y no a clientes nuevos. Con hojas de 300 clientes el árbol queda demasiado simple (0.448).
+
+::: {.notes}
+Tiempo estimado: 45 s. Nombres en scikit-learn: `C` (LogisticRegression), `max_depth` y `min_samples_leaf` (DecisionTreeClassifier).
+:::
+
+## Ajuste del umbral de decisión
+
+::: footer
+Contexto · Preparación · **Modelado** · Evaluación · Explicabilidad · Autopsia · Conclusiones
+:::
+::: {.destacado}
+**Umbral:** probabilidad mínima para recomendar la llamada (árbol: llamar si P(Sí) ≥ 0.55).
+:::
+
+![](artifacts/figuras_v3/v3_umbral.png){height="330" fig-align="center"}
+
+- Se probaron umbrales de 0.30 a 0.80 en validación. Subir el umbral: menos llamadas y más acertadas (sube la precision), pero se pierden interesados (baja el recall).
+- Elegidos por mayor F1: **logística 0.60** (F1 0.476) y **árbol 0.55** (F1 0.500). Ambos superan 0.50 porque la ponderación de clases eleva las probabilidades de "Sí".
+
+::: {.notes}
+Tiempo estimado: 45 s.
+:::
+
+## Resultados en el conjunto de prueba
+
+::: footer
+Contexto · Preparación · Modelado · **Evaluación** · Explicabilidad · Autopsia · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="42%"}
+| Modelo | Accuracy | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|
+| Árbol (0.55) | **0.872** | **0.449** | 0.596 | **0.512** |
+| Logística (0.60) | 0.861 | 0.420 | **0.607** | 0.497 |
+
+- **Accuracy:** ambos quedan debajo del 0.887 de responder siempre "No", pero ese modelo no encuentra a ningún interesado.
+- El F1 en prueba es similar al de validación: no hay sobreajuste.
+:::
+
+::: {.column width="58%"}
+![](artifacts/figuras_v3/v3_matrices_confusion.png){width="100%"}
+:::
+::::
+
+::: {.destacado}
+**Sin modelo:** acepta el [11.27%]{.cifra} de los llamados. **Con el árbol:** acepta el [44.89%]{.cifra}; se llama al 15% de la lista (1,232 clientes) y se captan 553 de los 928 interesados.
+:::
+
+::: {.notes}
+Tiempo estimado: 60 s.
+:::
+
+## Variables que usa cada modelo
+
+::: footer
+Contexto · Preparación · Modelado · **Evaluación** · Explicabilidad · Autopsia · Conclusiones
+:::
+![](artifacts/figuras_v3/v3_importancia.png){height="370" fig-align="center"}
+
+- Ambos modelos coinciden: Euribor, historial de contacto y mes.
+- **Signo de la Euribor:** su coeficiente es negativo (−0.89 por desviación estándar): una tasa alta empuja hacia "No". En un cliente con tasa **baja**, el aporte es **positivo**.
+- El árbol concentra el **82%** de su importancia en la Euribor. Sus cortes (4.857, 4.860) identifican semanas específicas de la campaña.
+
+::: {.notes}
+Tiempo estimado: 45 s.
+:::
+
+## Árbol de decisión: primeros niveles
+
+::: footer
+Contexto · Preparación · Modelado · Evaluación · **Explicabilidad** · Autopsia · Conclusiones
+:::
+![](artifacts/figuras_v3/v3_arbol_simplificado.png){height="470" fig-align="center"}
+
+::: {.nota}
+Línea gruesa: camino del Caso A (siguiente diapositiva). Color: % real de aceptación en entrenamiento (tasa general 11.3%). En niveles inferiores aparecen el número de llamadas y cortes finos de la Euribor.
+:::
+
+::: {.notes}
+Tiempo estimado: 40 s. El árbol completo tiene 7 niveles; se muestran 3. El porcentaje de cada caja es la aceptación real (sin ponderar) de los clientes de entrenamiento que llegan a ese nodo. La línea gruesa es el camino del cliente de la siguiente diapositiva.
+:::
+
+## Caso clasificado correctamente: decisión paso a paso
+
+::: footer
+Contexto · Preparación · Modelado · Evaluación · **Explicabilidad** · Autopsia · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="45%"}
+**Caso A:** jubilado de 66 años, éxito previo, celular, marzo, Euribor 0.655%. **Aceptó.**
+
+**Camino en el árbol**
+
+1. Euribor = 0.655% ≤ 1.265%
+2. Euribor = 0.655% ≤ 1.092%
+3. Contacto previo = Sí
+4. IPC = 93.369 > 92.681
+5. Día distinto de lunes
+6. Edad = 66 > 35.5
+7. Llamadas en la campaña = 1 ≤ 1.5
+
+::: {.destacado}
+Hoja 28: 101 clientes, 89.1% aceptó. P(Sí) = **0.985**.
+:::
+:::
+
+::: {.column width="55%"}
+**Regresión logística** (aporte = coeficiente × valor estandarizado)
+
+![](artifacts/figuras_v3/v3_aportes_caso_a.png){height="300"}
+
+P(Sí) = 1 / (1 + e^−4.746^) = **0.991**
+:::
+::::
+
+::: {.notes}
+Tiempo estimado: 60 s.
+:::
+
+## Autopsia: errores del árbol de decisión
+
+::: footer
+Contexto · Preparación · Modelado · Evaluación · Explicabilidad · **Autopsia** · Conclusiones
+:::
+![](artifacts/figuras_v3/v3_autopsia.png){height="380" fig-align="center"}
+
+:::: {.columns}
+::: {.column width="45%"}
+| Error | Casos | Consecuencia |
+|---|---:|---|
+| **Falso positivo** (Tipo I) | 679 | Llamada sin éxito |
+| **Falso negativo** (Tipo II) | 375 | Depósito no captado |
+:::
+
+::: {.column width="55%"}
+::: {.chico}
+- Los errores **no están cerca del umbral**: las cajas de los falsos positivos y negativos están lejos de la línea 0.55. El modelo no distingue estos clientes de los que clasifica bien.
+- **Falsos positivos:** 100% con Euribor < 3%, pero solo 12% con contacto previo.
+- **Falsos negativos:** aceptaron en condiciones desfavorables (39% en mayo).
+:::
+:::
+::::
+
+::: {.notes}
+Tiempo estimado: 50 s.
+:::
+
+## Dos casos fallidos
+
+::: footer
+Contexto · Preparación · Modelado · Evaluación · Explicabilidad · **Autopsia** · Conclusiones
+:::
+:::: {.columns}
+::: {.column width="50%"}
+**Error 2 de 5: falso positivo (P(Sí) = 0.97)**
+
+Jubilado de 56 años, contacto previo con resultado **fracaso**, celular, marzo, Euribor 0.644%. **No aceptó.**
+
+- **Hipótesis:** en esa rama el árbol solo pregunta si hubo contacto previo, no cuál fue su resultado.
+- **Solución:** combinar contacto previo y resultado previo en una sola variable (sin historial, fracaso, éxito).
+:::
+
+::: {.column width="50%"}
+**Error 5 de 5: falso negativo (P(Sí) = 0.00)**
+
+Empleado de servicios de 52 años, teléfono fijo, mayo, Euribor 4.858%, 5 llamadas. **Aceptó.**
+
+- **Hipótesis:** cae en una hoja que corresponde a una semana de mayo en la que ninguno de 128 clientes aceptó; su motivo no está en los datos.
+- **Solución:** reemplazar el valor exacto de la Euribor por un nivel de tasas (baja o alta) y validar el modelo en el tiempo.
+:::
+::::
+
+::: {.alerta}
+Los cinco errores analizados se concentran en dos hojas: el modelo depende más del **periodo** de la llamada que del **perfil** del cliente.
+:::
+
+::: {.notes}
+Tiempo estimado: 60 s.
+:::
+
+## Comparación y conclusiones
+
+::: footer
+Contexto · Preparación · Modelado · Evaluación · Explicabilidad · Autopsia · **Conclusiones**
+:::
+:::: {.columns}
+::: {.column width="58%"}
+::: {.destacado}
+**Modelo elegido: árbol de decisión.** Mejor F1, mayor *precision* con un *recall* similar y reglas legibles.
+:::
+
+| | Árbol | Logística |
+|---|---|---|
+| F1 (prueba) | **0.512** | 0.497 |
+| Falsos positivos | **679** | 777 |
+| Falsos negativos | 375 | **365** |
+| Ventajas | Reglas legibles; capta cortes y combinaciones; no requiere estandarizar. | Estable ante el valor de C; un coeficiente resume cada variable; usa todas a la vez. |
+| Limitaciones | Usa la Euribor como calendario (82% de importancia); probabilidades extremas en hojas pequeñas. | Efectos lineales y aditivos: no capta la forma en U de la edad ni combinaciones. |
+
+: {tbl-colwidths="[22,39,39]"}
+:::
+
+::: {.column width="42%"}
+**Conclusiones técnicas**
+
+- El desbalance obligó a ponderar las clases y ajustar el umbral; aun así, el F1 se mantiene alrededor de 0.5.
+- El rendimiento depende del contexto de tasas de 2008 a 2010.
+
+**Mejoras de datos**
+
+- Variables financieras del cliente: saldo, ingresos, endeudamiento y depósitos vigentes.
+- Nivel de tasas, meses agrupados en temporadas y validación temporal.
+:::
+::::
+
+::: {.notes}
+Tiempo estimado: 60 s.
+:::
+
+## Consideraciones éticas
+
+::: footer
+Contexto · Preparación · Modelado · Evaluación · Explicabilidad · Autopsia · **Conclusiones**
+:::
+- **Privacidad:** el dataset contiene datos personales. Aplican el RGPD y, en Perú, la Ley N.º 29733; se requiere consentimiento.
+- **Personas vulnerables:** el modelo prioriza a jubilados y adultos mayores. Se debe verificar que el producto sea adecuado para cada cliente.
+- **Exclusión:** el modelo debe usarse para **ordenar** a quién llamar primero, no para **negar** el acceso al producto.
+- **Costo de los errores:** con el umbral elegido no se encuentra al 40% de los interesados; el banco debe definir ese equilibrio.
+- **Supervisión humana y monitoreo:** el modelo puede perder rendimiento si cambia el contexto económico.
+
+::: {.notes}
+Tiempo estimado: 40 s.
+:::
+
+## Gracias {.center}
+
+::: {.notes}
+Tiempo total estimado: 12 min 30 s.
+:::
